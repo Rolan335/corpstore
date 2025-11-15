@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  corpstore:
+    build: .
+    image: corpstore:local
+    ports:
+      - "8080:8080"
+    environment:
+      - CORPSTORE_DATA_DIR=/data
+      - DATABASE_URL=postgres://corpuser:corppass@db:5432/corpstore?sslmode=disable
+    volumes:
+      - corpstore-data:/data
+    depends_on:
+      - db
+
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: corpuser
+      POSTGRES_PASSWORD: corppass
+      POSTGRES_DB: corpstore
+    volumes:
+      - corpstore-db:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+volumes:
+  corpstore-data:
+    driver: local
+  corpstore-db:
+    driver: local
