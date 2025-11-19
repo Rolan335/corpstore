@@ -2,7 +2,6 @@ package local
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 
@@ -26,8 +25,8 @@ func newUUID() (string, error) {
 	return uuid.NewString(), nil
 }
 
-// Save implements FileStore.Save(ctx, r)
-func (l *LocalStorage) Save(ctx context.Context, r io.ReadSeeker) (string, error) {
+// Save implements FileStore.Save(ctx, data []byte)
+func (l *LocalStorage) Save(ctx context.Context, data []byte) (string, error) {
 	id, err := newUUID()
 	if err != nil {
 		return "", err
@@ -39,29 +38,20 @@ func (l *LocalStorage) Save(ctx context.Context, r io.ReadSeeker) (string, error
 	}
 	defer f.Close()
 
-	// ensure reader is at start
-	if _, err := r.Seek(0, io.SeekStart); err == nil {
-		// copy
-		if _, err := io.Copy(f, r); err != nil {
-			return "", err
-		}
-	} else {
-		// If Seek not supported, still try copying from current position
-		if _, err := io.Copy(f, r); err != nil {
-			return "", err
-		}
+	if _, err := f.Write(data); err != nil {
+		return "", err
 	}
 
 	return id, nil
 }
 
-func (l *LocalStorage) Get(ctx context.Context, id string) (io.ReadCloser, error) {
+func (l *LocalStorage) Get(ctx context.Context, id string) ([]byte, error) {
 	path := filepath.Join(l.dir, id)
-	f, err := os.Open(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	return f, nil
+	return b, nil
 }
 
 // Delete removes stored file by id

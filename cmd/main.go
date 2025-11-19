@@ -2,19 +2,26 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/joho/godotenv"
 
+	"corpstore/internal/auth"
 	"corpstore/internal/handlers"
 	"corpstore/internal/storage/db"
 	localstorage "corpstore/internal/storage/local"
-	"corpstore/internal/storage/storage_db"
+	storage_db "corpstore/internal/storage/storage_db"
+	"corpstore/internal/telegram"
 )
 
 func main() {
+	// try to load .env if present
+	_ = godotenv.Load(".env")
+
 	// storage directory
 	dataDir := "./data"
 	if v := os.Getenv("CORPSTORE_DATA_DIR"); v != "" {
@@ -29,7 +36,7 @@ func main() {
 	// initialize DB
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
-		dsn = "postgres://corpuser:corppass@localhost:5432/corpstore?sslmode=disable"
+		dsn = "postgres://corpuser:corppass@db:5432/corpstore?sslmode=disable"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -45,14 +52,40 @@ func main() {
 
 	h := handlers.NewHandler(composed, dbPool)
 
+	// auth service
+	jwtSecret := auth.SecretFromEnv()
+	authSvc := auth.NewService(dbPool, jwtSecret, 24*time.Hour)
+	// wire auth service into handlers
+	h.SetAuth(authSvc)
+
+	fmt.Println(os.Getenv("TELEGRAM_BOT_TOKEN"))
+	// try initialize telegram bot (optional)
+	if os.Getenv("TELEGRAM_BOT_TOKEN") != "" {
+		bot, err := telegram.NewBotFromEnv(h, authSvc)
+		if err != nil {
+			log.Printf("failed to init telegram bot: %v", err)
+		} else {
+			// start polling in background
+			go bot.StartPolling(context.Background())
+			log.Printf("telegram bot polling started")
+		}
+	} else {
+		log.Printf("TELEGRAM_BOT_TOKEN not set; telegram bot disabled")
+	}
+
 	r := gin.Default()
 
-	// Upload endpoint
-	r.POST("/files", h.UploadFilesGin)
-	// Download endpoint
-	r.GET("/files/:id", h.GetFileGin)
-	// Create user
-	r.POST("/users", h.CreateUserGin)
+	// auth endpoints
+	r.POST("/reg", h.CreateUser) // registration
+	r.POST("/login", h.Login)
+
+	// protected group
+	authMw := auth.JWTMiddleware([]byte(jwtSecret), dbPool)
+	grp := r.Group("/")
+	grp.Use(authMw)
+	grp.POST("/files", h.UploadFiles)
+	grp.GET("/files/:id", h.GetFile)
+	grp.GET("/files", h.ListFiles)
 
 	addr := ":8080"
 	log.Printf("listening on %s, storing files in %s", addr, dataDir)

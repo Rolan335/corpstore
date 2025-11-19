@@ -2,7 +2,6 @@ package storage_db
 
 import (
 	"context"
-	"io"
 
 	stor "corpstore/internal/storage"
 	"corpstore/internal/storage/meta"
@@ -19,8 +18,8 @@ func NewDBStorage(fs stor.FileStore, m meta.MetaStore) stor.Storage {
 	return &DBStorage{fs: fs, meta: m}
 }
 
-func (s *DBStorage) Save(ctx context.Context, r io.ReadSeeker, filename string, ownerID string) (string, error) {
-	id, err := s.fs.Save(ctx, r)
+func (s *DBStorage) Save(ctx context.Context, data []byte, filename string, ownerID string) (string, error) {
+	id, err := s.fs.Save(ctx, data)
 	if err != nil {
 		return "", err
 	}
@@ -36,7 +35,7 @@ func (s *DBStorage) Save(ctx context.Context, r io.ReadSeeker, filename string, 
 	return id, nil
 }
 
-func (s *DBStorage) Get(ctx context.Context, id string) (io.ReadCloser, error) {
+func (s *DBStorage) Get(ctx context.Context, id string) ([]byte, error) {
 	return s.fs.Get(ctx, id)
 }
 

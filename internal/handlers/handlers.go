@@ -1,14 +1,16 @@
 package handlers
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
+	"fmt"
 	"io"
-	"net/http"
-	"strings"
+	"log"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/bcrypt"
 
+	"corpstore/internal/auth"
 	"corpstore/internal/storage"
 	"corpstore/internal/storage/meta"
 )
@@ -17,30 +19,48 @@ import (
 type Handler struct {
 	store storage.Storage
 	meta  meta.MetaStore
+	auth  *auth.Service
 }
 
 func NewHandler(s storage.Storage, m meta.MetaStore) *Handler {
 	return &Handler{store: s, meta: m}
 }
 
-// UploadFiles handles POST /files. Expects multipart form with field "files" containing one or more files.
-// Returns JSON array of objects {"filename":"...","id":"..."}.
-func (h *Handler) UploadFiles(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
+// Store returns internal storage for bots or other integrations that need direct access.
+func (h *Handler) Store() interface {
+	Save(ctx context.Context, data []byte, filename string, ownerID string) (string, error)
+	Get(ctx context.Context, id string) ([]byte, error)
+	GetMetadata(ctx context.Context, id string) (string, string, error)
+} {
+	return interface {
+		Save(ctx context.Context, data []byte, filename string, ownerID string) (string, error)
+		Get(ctx context.Context, id string) ([]byte, error)
+		GetMetadata(ctx context.Context, id string) (string, string, error)
+	}(h.store)
+}
+
+// SetAuth allows wiring auth.Service after Handler creation.
+func (h *Handler) SetAuth(a *auth.Service) {
+	h.auth = a
+}
+
+// UploadFiles handles POST /files (multipart form). Owner is read from gin context (set by auth middleware).
+func (h *Handler) UploadFiles(c *gin.Context) {
+	start := time.Now()
+	ctx := c.Request.Context()
+	log.Printf("UploadFiles start from %s", c.ClientIP())
+
+	form, err := c.MultipartForm()
+	if err != nil {
+		log.Printf("UploadFiles: parse multipart error: %v, elapsed=%s", err, time.Since(start))
+		c.JSON(400, gin.H{"error": "failed to parse multipart form: " + err.Error()})
 		return
 	}
+	log.Printf("UploadFiles: parsed multipart, elapsed=%s", time.Since(start))
 
-	// Parse multipart form (up to 32 MB in memory; larger parts will be stored in temp files).
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		http.Error(w, "failed to parse multipart form: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	files := r.MultipartForm.File["files"]
+	files := form.File["files"]
 	if len(files) == 0 {
-		http.Error(w, "no files provided under form field 'files'", http.StatusBadRequest)
+		c.JSON(400, gin.H{"error": "no files provided under form field 'files'"})
 		return
 	}
 
@@ -51,136 +71,191 @@ func (h *Handler) UploadFiles(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]fileResp, 0, len(files))
 
-	// owner ID can be passed via header X-Owner-ID for now
-	ownerID := r.Header.Get("X-Owner-ID")
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
 
-	for _, fh := range files {
+	// validate owner exists (defensive)
+	okExists, err := h.meta.UserExists(ctx, ownerID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to validate owner: " + err.Error()})
+		return
+	}
+	if !okExists {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found"})
+		return
+	}
+
+	for i, fh := range files {
+		fileStart := time.Now()
+		log.Printf("UploadFiles: processing file %d name=%s", i, fh.Filename)
+
 		f, err := fh.Open()
 		if err != nil {
-			http.Error(w, "failed to open uploaded file: "+err.Error(), http.StatusInternalServerError)
+			log.Printf("UploadFiles: open file error: %v, elapsed=%s", err, time.Since(fileStart))
+			c.JSON(500, gin.H{"error": "failed to open uploaded file: " + err.Error()})
 			return
 		}
-		// Read into memory first; implementations of storage.Save expect an io.ReadSeeker.
+
 		buf, err := io.ReadAll(f)
 		f.Close()
 		if err != nil {
-			http.Error(w, "failed to read uploaded file: "+err.Error(), http.StatusInternalServerError)
+			log.Printf("UploadFiles: read file error: %v, elapsed=%s", err, time.Since(fileStart))
+			c.JSON(500, gin.H{"error": "failed to read uploaded file: " + err.Error()})
 			return
 		}
+		log.Printf("UploadFiles: read %d bytes for %s, elapsed=%s", len(buf), fh.Filename, time.Since(fileStart))
 
-		rs := bytes.NewReader(buf) // implements io.ReadSeeker
+		// set per-file save timeout to avoid long blocking
+		saveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 
-		id, err := h.store.Save(ctx, rs, fh.Filename, ownerID)
+		id, err := h.store.Save(saveCtx, buf, fh.Filename, ownerID)
+		// cancel immediately to free timer resources
+		cancel()
 		if err != nil {
-			http.Error(w, "failed to save file: "+err.Error(), http.StatusInternalServerError)
+			log.Printf("UploadFiles: save error: %v, elapsed since start=%s", err, time.Since(start))
+			c.JSON(500, gin.H{"error": "failed to save file: " + err.Error()})
 			return
 		}
+		log.Printf("UploadFiles: saved file id=%s name=%s, elapsed since start=%s", id, fh.Filename, time.Since(start))
 
 		resp = append(resp, fileResp{Filename: fh.Filename, ID: id})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	enc := json.NewEncoder(w)
-	if err := enc.Encode(resp); err != nil {
-		// encoding error
-		w.WriteHeader(http.StatusInternalServerError)
-	}
+	log.Printf("UploadFiles: completed %d files, total elapsed=%s", len(files), time.Since(start))
+	c.JSON(200, resp)
 }
 
-// GetFile handles GET /files/{id} - streams the file back.
-func (h *Handler) GetFile(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	if r.Method != http.MethodGet {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	// Expect URL like /files/{id}
-	id := strings.TrimPrefix(r.URL.Path, "/files/")
-	if id == "" {
-		http.Error(w, "missing file id", http.StatusBadRequest)
-		return
-	}
-
-	// fetch metadata (filename, owner)
-	filename, _, err := h.store.GetMetadata(ctx, id)
-	if err != nil {
-		http.Error(w, "file metadata not found: "+err.Error(), http.StatusNotFound)
-		return
-	}
-
-	rc, err := h.store.Get(ctx, id)
-	if err != nil {
-		http.Error(w, "file not found: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	defer rc.Close()
-
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename=\""+filename+"\"")
-
-	if _, err := io.Copy(w, rc); err != nil {
-		// cannot write response
-		return
-	}
-}
-
-// CreateUser handles POST /users {"username":"..."}
-func (h *Handler) CreateUser(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	if r.Method != http.MethodPost {
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-
-	type req struct {
-		Username string `json:"username"`
-	}
-	var rq req
-	if err := json.NewDecoder(r.Body).Decode(&rq); err != nil {
-		http.Error(w, "invalid body: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	if rq.Username == "" {
-		http.Error(w, "username required", http.StatusBadRequest)
-		return
-	}
-
-	id, err := h.meta.CreateUser(ctx, rq.Username)
-	if err != nil {
-		http.Error(w, "failed to create user: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]string{"id": id, "username": rq.Username})
-}
-
-// Gin adapter for UploadFiles - forwards to existing net/http handler.
-func (h *Handler) UploadFilesGin(c *gin.Context) {
-	// reuse existing handler implementation
-	h.UploadFiles(c.Writer, c.Request)
-}
-
-// Gin adapter for GetFile - forwards to existing net/http handler.
-func (h *Handler) GetFileGin(c *gin.Context) {
-	// we can use param :id in route, but existing handler reads from URL path.
-	// Ensure the request URL is set to /files/{id} so the underlying handler parses it.
+// GetFile handles GET /files/:id and returns the file. Owner is verified from gin context.
+func (h *Handler) GetFile(c *gin.Context) {
+	ctx := c.Request.Context()
 	id := c.Param("id")
-	// create a shallow copy of request with adjusted URL.Path
-	r := c.Request
-	if r != nil {
-		r2 := *r
-		r2.URL.Path = "/files/" + id
-		// call with modified request
-		h.GetFile(c.Writer, &r2)
+	if id == "" {
+		c.JSON(400, gin.H{"error": "missing file id"})
 		return
 	}
-	c.Status(http.StatusInternalServerError)
+
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
+
+	filename, fileOwner, err := h.store.GetMetadata(ctx, id)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "file metadata not found: " + err.Error()})
+		return
+	}
+
+	// enforce owner match
+	if fileOwner != ownerID {
+		c.JSON(403, gin.H{"error": "forbidden: owner mismatch"})
+		return
+	}
+
+	b, err := h.store.Get(ctx, id)
+	if err != nil {
+		c.JSON(404, gin.H{"error": "file not found: " + err.Error()})
+		return
+	}
+
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", filename))
+	c.Status(200)
+	if _, err := c.Writer.Write(b); err != nil {
+		// writing failed; cannot change headers now
+		return
+	}
 }
 
-// Gin adapter for CreateUser
-func (h *Handler) CreateUserGin(c *gin.Context) {
-	h.CreateUser(c.Writer, c.Request)
+// CreateUser handles POST /users (register)
+func (h *Handler) CreateUser(c *gin.Context) {
+	ctx := c.Request.Context()
+	var rq struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.BindJSON(&rq); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body: " + err.Error()})
+		return
+	}
+	if rq.Username == "" || rq.Password == "" {
+		c.JSON(400, gin.H{"error": "username and password required"})
+		return
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(rq.Password), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to hash password: " + err.Error()})
+		return
+	}
+
+	id, err := h.meta.CreateUser(ctx, rq.Username, string(hash))
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to create user: " + err.Error()})
+		return
+	}
+
+	c.JSON(201, gin.H{"id": id, "username": rq.Username})
+}
+
+// Login handles POST /login with same username/password used in registration and returns JWT
+func (h *Handler) Login(c *gin.Context) {
+	if h.auth == nil {
+		c.JSON(500, gin.H{"error": "auth service not configured"})
+		return
+	}
+	var rq struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := c.BindJSON(&rq); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body: " + err.Error()})
+		return
+	}
+	if rq.Username == "" || rq.Password == "" {
+		c.JSON(400, gin.H{"error": "username and password required"})
+		return
+	}
+	okTok, err := h.auth.Login(c.Request.Context(), rq.Username, rq.Password)
+	if err != nil {
+		c.JSON(401, gin.H{"error": "invalid credentials"})
+		return
+	}
+	c.JSON(200, gin.H{"token": okTok})
+}
+
+// ListFiles returns JSON list of files for authenticated owner.
+func (h *Handler) ListFiles(c *gin.Context) {
+	ctx := c.Request.Context()
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
+
+	files, err := h.meta.ListFilesByOwner(ctx, ownerID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to list files: " + err.Error()})
+		return
+	}
+
+	c.JSON(200, files)
 }
