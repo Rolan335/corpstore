@@ -4,9 +4,6 @@ services:
     image: corpstore:local
     ports:
       - "8080:8080"
-    environment:
-      - CORPSTORE_DATA_DIR=/data
-      - DATABASE_URL=postgres://corpuser:corppass@db:5432/corpstore?sslmode=disable
     volumes:
       - corpstore-data:/data
     depends_on:

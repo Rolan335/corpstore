@@ -18,7 +18,6 @@ COPY --from=builder /app/corpstore /app/corpstore
 COPY .env /app/.env
 
 WORKDIR /app
-ENV CORPSTORE_DATA_DIR=/data
 VOLUME ["/data"]
 EXPOSE 8080
 

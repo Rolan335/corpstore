@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"time"
@@ -20,7 +19,7 @@ import (
 
 func main() {
 	// try to load .env if present
-	_ = godotenv.Load(".env")
+	_ = godotenv.Load("./.env")
 
 	// storage directory
 	dataDir := "./data"
@@ -58,19 +57,14 @@ func main() {
 	// wire auth service into handlers
 	h.SetAuth(authSvc)
 
-	fmt.Println(os.Getenv("TELEGRAM_BOT_TOKEN"))
 	// try initialize telegram bot (optional)
-	if os.Getenv("TELEGRAM_BOT_TOKEN") != "" {
-		bot, err := telegram.NewBotFromEnv(h, authSvc)
-		if err != nil {
-			log.Printf("failed to init telegram bot: %v", err)
-		} else {
-			// start polling in background
-			go bot.StartPolling(context.Background())
-			log.Printf("telegram bot polling started")
-		}
+	bot, err := telegram.NewBotFromEnv(h, authSvc)
+	if err != nil {
+		log.Printf("failed to init telegram bot: %v", err)
 	} else {
-		log.Printf("TELEGRAM_BOT_TOKEN not set; telegram bot disabled")
+		// start polling in background
+		go bot.StartPolling(context.Background())
+		log.Printf("telegram bot polling started")
 	}
 
 	r := gin.Default()
