@@ -70,7 +70,7 @@ func main() {
 	r := gin.Default()
 
 	// auth endpoints
-	r.POST("/reg", h.CreateUser) // registration
+	r.POST("/reg", h.CreateUser)
 	r.POST("/login", h.Login)
 
 	// protected group
