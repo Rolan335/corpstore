@@ -15,7 +15,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /app/corpstore ./cmd
 FROM alpine:3.18
 
 COPY --from=builder /app/corpstore /app/corpstore
-COPY .env /app/.env
+
+RUN adduser -D -g '' corpuser
+USER corpuser
 
 WORKDIR /app
 VOLUME ["/data"]

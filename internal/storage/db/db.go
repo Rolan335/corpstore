@@ -26,6 +26,10 @@ func (d *DB) Close() {
 	d.pool.Close()
 }
 
+func (d *DB) Ping(ctx context.Context) error {
+	return d.pool.Ping(ctx)
+}
+
 // SaveFileMetadata saves file metadata (id, filename, owner) inside a transaction.
 func (d *DB) SaveFileMetadata(ctx context.Context, id string, filename string, ownerID string) error {
 	conn, err := d.pool.Acquire(ctx)

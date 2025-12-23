@@ -67,6 +67,19 @@ func main() {
 		log.Printf("telegram bot polling started")
 	}
 
+	healthHandler := handlers.NewHealthHandler(dbPool)
+
+	// init health/readiness endpoint
+	rHealth := gin.Default()
+	rHealth.GET("/live", healthHandler.Healthy)
+	rHealth.GET("/ready", healthHandler.Ready)
+
+	go func() {
+		if err := rHealth.Run("127.0.0.1:8081"); err != nil {
+			log.Fatalf("health server error: %v", err)
+		}
+	}()
+
 	r := gin.Default()
 
 	// auth endpoints
@@ -83,6 +96,7 @@ func main() {
 
 	addr := ":8080"
 	log.Printf("listening on %s, storing files in %s", addr, dataDir)
+
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("server error: %v", err)
 	}

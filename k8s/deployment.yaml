@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: corpstore
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: corpstore
+  template:
+    metadata:
+      labels:
+        app: corpstore
+    spec:
+      containers:
+      - name: corpstore
+        image: localhost:5000/corpstore:dev
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: corpstore-config
+        - secretRef:
+            name: corpstore-db-secret
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /live
+            port: 8081
+          initialDelaySeconds: 15
+          periodSeconds: 20

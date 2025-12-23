@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: corpstore-config
+data:
+  APP_ENV: production
+  LOG_LEVEL: info
+  DB_HOST: corpstore-db
