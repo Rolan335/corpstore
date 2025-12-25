@@ -15,9 +15,6 @@ type LocalStorage struct {
 }
 
 func NewLocalStorage(dir string) (*LocalStorage, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
 	return &LocalStorage{dir: dir}, nil
 }
 

@@ -16,7 +16,9 @@ FROM alpine:3.18
 
 COPY --from=builder /app/corpstore /app/corpstore
 
-RUN adduser -D -g '' corpuser
+RUN adduser -D -g '' corpuser \
+    && mkdir /data \
+    && chown corpuser:corpuser /data
 USER corpuser
 
 WORKDIR /app

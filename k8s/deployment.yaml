@@ -12,10 +12,16 @@ spec:
       labels:
         app: corpstore
     spec:
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000          # UID corpuser
       containers:
       - name: corpstore
-        image: localhost:5000/corpstore:dev
-        imagePullPolicy: Always
+        image: corpstore:dev
+        imagePullPolicy: IfNotPresent
+        volumeMounts:
+        - mountPath: /data
+          name: data
         ports:
         - containerPort: 8080
         envFrom:
@@ -35,3 +41,6 @@ spec:
             port: 8081
           initialDelaySeconds: 15
           periodSeconds: 20
+      volumes:
+      - name: data
+        emptyDir: {}
