@@ -75,7 +75,7 @@ func main() {
 	rHealth.GET("/ready", healthHandler.Ready)
 
 	go func() {
-		if err := rHealth.Run("127.0.0.1:8081"); err != nil {
+		if err := rHealth.Run(":8081"); err != nil {
 			log.Fatalf("health server error: %v", err)
 		}
 	}()
