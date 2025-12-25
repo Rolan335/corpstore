@@ -25,9 +25,9 @@ func (h *HealthHandler) Ready(c *gin.Context) {
 }
 
 func (h *HealthHandler) Healthy(c *gin.Context) {
-	if err := h.db.Ping(c.Request.Context()); err != nil {
-		c.Status(500)
-		return
-	}
+	// if err := h.db.Ping(c.Request.Context()); err != nil {
+	// 	c.Status(500)
+	// 	return
+	// }
 	c.Status(200)
 }

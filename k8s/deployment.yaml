@@ -17,7 +17,7 @@ spec:
         runAsUser: 1000          # UID corpuser
       containers:
       - name: corpstore
-        image: corpstore:dev
+        image: corpstore:db70d13
         imagePullPolicy: IfNotPresent
         volumeMounts:
         - mountPath: /data
