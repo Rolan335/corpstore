@@ -13,7 +13,7 @@ import (
 	"corpstore/internal/handlers"
 	"corpstore/internal/storage/db"
 	localstorage "corpstore/internal/storage/local"
-	storage_db "corpstore/internal/storage/storage_db"
+	metastorage "corpstore/internal/storage/storage_db"
 	"corpstore/internal/telegram"
 )
 
@@ -47,9 +47,9 @@ func main() {
 	defer dbPool.Close()
 
 	// create storage that composes file bytes store and meta DB
-	composed := storage_db.NewDBStorage(st, dbPool)
+	metaStorage := metastorage.NewMetaStorage(st, dbPool)
 
-	h := handlers.NewHandler(composed, dbPool)
+	h := handlers.NewHandler(metaStorage, dbPool)
 
 	// auth service
 	jwtSecret := auth.SecretFromEnv()
@@ -58,7 +58,7 @@ func main() {
 	h.SetAuth(authSvc)
 
 	// try initialize telegram bot (optional)
-	bot, err := telegram.NewBotFromEnv(h, authSvc)
+	bot, err := telegram.NewBotFromEnv(h, authSvc, metaStorage)
 	if err != nil {
 		log.Printf("failed to init telegram bot: %v", err)
 	} else {

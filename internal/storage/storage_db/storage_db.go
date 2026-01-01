@@ -1,4 +1,4 @@
-package storage_db
+package metastorage
 
 import (
 	"context"
@@ -7,18 +7,18 @@ import (
 	"corpstore/internal/storage/meta"
 )
 
-// DBStorage implements stor.Storage by composing a low-level FileStore and a MetaStore.
-type DBStorage struct {
+// MetaStorage implements stor.Storage by composing a low-level FileStore and a MetaStore.
+type MetaStorage struct {
 	fs   stor.FileStore
-	meta meta.MetaStore
+	meta meta.Store
 }
 
-// NewDBStorage creates a new DBStorage and returns it as stor.Storage
-func NewDBStorage(fs stor.FileStore, m meta.MetaStore) stor.Storage {
-	return &DBStorage{fs: fs, meta: m}
+// NewDBStorage creates a new MetaStorage and returns it as stor.Storage
+func NewMetaStorage(fs stor.FileStore, m meta.Store) stor.Storage {
+	return &MetaStorage{fs: fs, meta: m}
 }
 
-func (s *DBStorage) Save(ctx context.Context, data []byte, filename string, ownerID string) (string, error) {
+func (s *MetaStorage) Save(ctx context.Context, data []byte, filename string, ownerID string) (string, error) {
 	id, err := s.fs.Save(ctx, data)
 	if err != nil {
 		return "", err
@@ -35,10 +35,10 @@ func (s *DBStorage) Save(ctx context.Context, data []byte, filename string, owne
 	return id, nil
 }
 
-func (s *DBStorage) Get(ctx context.Context, id string) ([]byte, error) {
+func (s *MetaStorage) Get(ctx context.Context, id string) ([]byte, error) {
 	return s.fs.Get(ctx, id)
 }
 
-func (s *DBStorage) GetMetadata(ctx context.Context, id string) (string, string, error) {
+func (s *MetaStorage) GetMetadata(ctx context.Context, id string) (string, string, error) {
 	return s.meta.GetFileMetadata(ctx, id)
 }

@@ -150,6 +150,3 @@ func (d *DB) ListFilesByOwner(ctx context.Context, ownerID string) ([]meta.FileI
 	}
 	return out, nil
 }
-
-// Ensure DB implements meta.MetaStore
-var _ meta.MetaStore = (*DB)(nil)

@@ -18,16 +18,9 @@ func NewLocalStorage(dir string) (*LocalStorage, error) {
 	return &LocalStorage{dir: dir}, nil
 }
 
-func newUUID() (string, error) {
-	return uuid.NewString(), nil
-}
-
 // Save implements FileStore.Save(ctx, data []byte)
 func (l *LocalStorage) Save(ctx context.Context, data []byte) (string, error) {
-	id, err := newUUID()
-	if err != nil {
-		return "", err
-	}
+	id := uuid.NewString()
 	path := filepath.Join(l.dir, id)
 	f, err := os.Create(path)
 	if err != nil {

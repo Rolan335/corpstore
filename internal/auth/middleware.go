@@ -13,7 +13,7 @@ import (
 
 // JWTMiddleware validates Authorization: Bearer <token>, checks the user exists and
 // stores ownerID in gin context under key "ownerID".
-func JWTMiddleware(secret []byte, m meta.MetaStore) gin.HandlerFunc {
+func JWTMiddleware(secret []byte, m meta.Store) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" {

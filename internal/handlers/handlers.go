@@ -18,25 +18,18 @@ import (
 // Handler holds dependencies for HTTP handlers.
 type Handler struct {
 	store storage.Storage
-	meta  meta.MetaStore
+	meta  meta.Store
 	auth  *auth.Service
 }
 
-func NewHandler(s storage.Storage, m meta.MetaStore) *Handler {
+func NewHandler(s storage.Storage, m meta.Store) *Handler {
 	return &Handler{store: s, meta: m}
 }
 
-// Store returns internal storage for bots or other integrations that need direct access.
-func (h *Handler) Store() interface {
+type Store interface {
 	Save(ctx context.Context, data []byte, filename string, ownerID string) (string, error)
 	Get(ctx context.Context, id string) ([]byte, error)
 	GetMetadata(ctx context.Context, id string) (string, string, error)
-} {
-	return interface {
-		Save(ctx context.Context, data []byte, filename string, ownerID string) (string, error)
-		Get(ctx context.Context, id string) ([]byte, error)
-		GetMetadata(ctx context.Context, id string) (string, string, error)
-	}(h.store)
 }
 
 // SetAuth allows wiring auth.Service after Handler creation.

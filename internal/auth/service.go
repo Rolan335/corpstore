@@ -17,12 +17,12 @@ var (
 )
 
 type Service struct {
-	meta      meta.MetaStore
+	meta      meta.Store
 	jwtSecret []byte
 	jwtTTL    time.Duration
 }
 
-func NewService(m meta.MetaStore, secret string, ttl time.Duration) *Service {
+func NewService(m meta.Store, secret string, ttl time.Duration) *Service {
 	return &Service{meta: m, jwtSecret: []byte(secret), jwtTTL: ttl}
 }
 

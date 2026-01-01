@@ -21,9 +21,10 @@ type Bot struct {
 	bot    *tele.BotAPI
 	h      *handlers.Handler
 	authSv *auth.Service
+	store  handlers.Store
 }
 
-func NewBotFromEnv(h *handlers.Handler, a *auth.Service) (*Bot, error) {
+func NewBotFromEnv(h *handlers.Handler, a *auth.Service, storage handlers.Store) (*Bot, error) {
 	_ = os.Setenv("TELEGRAM_TOKEN_LOADED", "1")
 	token := os.Getenv("TELEGRAM_BOT_TOKEN")
 	if token == "" {
@@ -34,7 +35,12 @@ func NewBotFromEnv(h *handlers.Handler, a *auth.Service) (*Bot, error) {
 		return nil, err
 	}
 	b.Debug = false
-	return &Bot{bot: b, h: h, authSv: a}, nil
+	return &Bot{
+		bot:    b,
+		h:      h,
+		authSv: a,
+		store:  storage,
+	}, nil
 }
 
 // StartPolling starts processing updates and maps commands to handlers.
@@ -157,7 +163,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		}
 
 		// save via storage
-		id, err := tb.h.Store().Save(ctx, data, filename, owner)
+		id, err := tb.store.Save(ctx, data, filename, owner)
 		if err != nil {
 			// make error messages clearer for common failures
 			le := strings.ToLower(err.Error())
@@ -197,7 +203,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		}
 		owner := claims.Subject
 		// fetch metadata and file via handlers' storage
-		filename, ownerID, err := tb.h.Store().GetMetadata(ctx, id)
+		filename, ownerID, err := tb.store.GetMetadata(ctx, id)
 		if err != nil {
 			// give clearer not found message
 			if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no rows") {
@@ -211,7 +217,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 			tb.reply(msg.Chat.ID, "forbidden: owner mismatch")
 			return
 		}
-		b, err := tb.h.Store().Get(ctx, id)
+		b, err := tb.store.Get(ctx, id)
 		if err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no rows") {
 				tb.reply(msg.Chat.ID, "file not found")
