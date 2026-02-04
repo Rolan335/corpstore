@@ -7,14 +7,17 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5"
 	"github.com/joho/godotenv"
 
 	"corpstore/internal/auth"
 	"corpstore/internal/handlers"
+	"corpstore/internal/repositories/files/files"
 	"corpstore/internal/storage/db"
 	localstorage "corpstore/internal/storage/local"
 	metastorage "corpstore/internal/storage/storage_db"
 	"corpstore/internal/telegram"
+	pg "corpstore/pkg/pg/provider"
 )
 
 func main() {
@@ -96,6 +99,16 @@ func main() {
 
 	addr := ":8080"
 	log.Printf("listening on %s, storing files in %s", addr, dataDir)
+
+	prv, _ := pg.NewPoolPrv(ctx, "huy")
+
+	prv.Tx(ctx, func(tx pgx.Tx) error {
+		if err := files.NewRepository().SaveFileMetadata(context.Background(), tx, "1", "1", "2"); err != nil {
+			return err
+		}
+
+		return nil
+	})
 
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("server error: %v", err)
