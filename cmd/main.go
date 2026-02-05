@@ -7,18 +7,23 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 
 	"corpstore/internal/auth"
+	"corpstore/internal/files"
+	"corpstore/internal/filestore/local"
 	"corpstore/internal/handlers"
-	"corpstore/internal/repositories/files/files"
-	"corpstore/internal/storage/db"
-	localstorage "corpstore/internal/storage/local"
-	metastorage "corpstore/internal/storage/storage_db"
 	"corpstore/internal/telegram"
-	pg "corpstore/pkg/pg/provider"
+	"corpstore/internal/users"
+	"corpstore/internal/usecase"
 )
+
+//TODO: Сделать удаление файлов и меты из бд.
+//TODO: Изменение пользователя
+//TODO: Комменты на русском
+//TODO: Обмен файлами между зарегаными юзерами
+//TODO: Шифровать файлы на сервере как-то
 
 func main() {
 	// try to load .env if present
@@ -30,7 +35,7 @@ func main() {
 		dataDir = v
 	}
 
-	st, err := localstorage.NewLocalStorage(dataDir)
+	st, err := local.New(dataDir)
 	if err != nil {
 		log.Fatalf("failed to initialize storage: %v", err)
 	}
@@ -43,31 +48,34 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	dbPool, err := db.NewDB(ctx, dsn)
+	dbPool, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		log.Fatalf("failed to connect db: %v", err)
 	}
 	defer dbPool.Close()
 
-	// create storage that composes file bytes store and meta DB
-	metaStorage := metastorage.NewMetaStorage(st, dbPool)
+	usersRepo := users.NewPostgresRepository(dbPool)
+	filesRepo := files.NewPostgresRepository(dbPool)
+	filesSvc := files.NewService(st, filesRepo)
 
-	h := handlers.NewHandler(metaStorage, dbPool)
-
-	// auth service
-	jwtSecret := auth.SecretFromEnv()
-	authSvc := auth.NewService(dbPool, jwtSecret, 24*time.Hour)
-	// wire auth service into handlers
-	h.SetAuth(authSvc)
+	authProvider := auth.NewProvider(usersRepo, auth.ConfigFromEnv())
+	filesUC := usecase.NewFiles(filesSvc, usersRepo)
+	authUC := usecase.NewAuth(authProvider.Service)
+	h := handlers.NewHandler(filesUC, authUC)
 
 	// try initialize telegram bot (optional)
-	bot, err := telegram.NewBotFromEnv(h, authSvc, metaStorage)
+	tgCfg, err := telegram.ConfigFromEnv()
 	if err != nil {
 		log.Printf("failed to init telegram bot: %v", err)
 	} else {
-		// start polling in background
-		go bot.StartPolling(context.Background())
-		log.Printf("telegram bot polling started")
+		tgProvider, err := telegram.NewProvider(tgCfg, authUC, filesUC)
+		if err != nil {
+			log.Printf("failed to init telegram bot: %v", err)
+		} else {
+			// start polling in background
+			go tgProvider.Bot.StartPolling(context.Background())
+			log.Printf("telegram bot polling started")
+		}
 	}
 
 	healthHandler := handlers.NewHealthHandler(dbPool)
@@ -90,7 +98,7 @@ func main() {
 	r.POST("/login", h.Login)
 
 	// protected group
-	authMw := auth.JWTMiddleware([]byte(jwtSecret), dbPool)
+	authMw := authProvider.Middleware
 	grp := r.Group("/")
 	grp.Use(authMw)
 	grp.POST("/files", h.UploadFiles)
@@ -99,16 +107,6 @@ func main() {
 
 	addr := ":8080"
 	log.Printf("listening on %s, storing files in %s", addr, dataDir)
-
-	prv, _ := pg.NewPoolPrv(ctx, "huy")
-
-	prv.Tx(ctx, func(tx pgx.Tx) error {
-		if err := files.NewRepository().SaveFileMetadata(context.Background(), tx, "1", "1", "2"); err != nil {
-			return err
-		}
-
-		return nil
-	})
 
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("server error: %v", err)

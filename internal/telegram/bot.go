@@ -7,40 +7,29 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 
 	tele "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
 	"corpstore/internal/auth"
-	"corpstore/internal/handlers"
+	"corpstore/internal/files"
+	"corpstore/internal/usecase"
 )
 
 // Bot wraps telegram bot and handlers to expose same functionality as HTTP endpoints.
 type Bot struct {
 	bot    *tele.BotAPI
-	h      *handlers.Handler
-	authSv *auth.Service
-	store  handlers.Store
+	authUC *usecase.Auth
+	files  *usecase.Files
 }
 
-func NewBotFromEnv(h *handlers.Handler, a *auth.Service, storage handlers.Store) (*Bot, error) {
-	_ = os.Setenv("TELEGRAM_TOKEN_LOADED", "1")
-	token := os.Getenv("TELEGRAM_BOT_TOKEN")
-	if token == "" {
-		return nil, fmt.Errorf("TELEGRAM_BOT_TOKEN not set")
-	}
-	b, err := tele.NewBotAPI(token)
-	if err != nil {
-		return nil, err
-	}
-	b.Debug = false
+func NewBot(bot *tele.BotAPI, authUC *usecase.Auth, filesUC *usecase.Files) *Bot {
+	bot.Debug = false
 	return &Bot{
-		bot:    b,
-		h:      h,
-		authSv: a,
-		store:  storage,
-	}, nil
+		bot:    bot,
+		authUC: authUC,
+		files:  filesUC,
+	}
 }
 
 // StartPolling starts processing updates and maps commands to handlers.
@@ -72,7 +61,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		}
 		username := parts[1]
 		password := parts[2]
-		id, err := tb.authSv.Register(ctx, username, password)
+		id, err := tb.authUC.Register(ctx, username, password)
 		if err != nil {
 			// try to detect duplicate username
 			if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(strings.ToLower(err.Error()), "unique") {
@@ -94,7 +83,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		}
 		username := parts[1]
 		password := parts[2]
-		tok, err := tb.authSv.Login(ctx, username, password)
+		tok, err := tb.authUC.Login(ctx, username, password)
 		if err != nil {
 			if errors.Is(err, auth.ErrInvalidCredentials) {
 				tb.reply(msg.Chat.ID, "login failed: invalid username or password")
@@ -125,7 +114,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 			return
 		}
 
-		claims, err := tb.authSv.ParseToken(ctx, token)
+		claims, err := tb.authUC.ParseToken(ctx, token)
 		if err != nil {
 			// try to provide a friendlier message
 			if strings.Contains(strings.ToLower(err.Error()), "expired") {
@@ -163,7 +152,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		}
 
 		// save via storage
-		id, err := tb.store.Save(ctx, data, filename, owner)
+		id, err := tb.files.SaveRaw(ctx, owner, filename, data)
 		if err != nil {
 			// make error messages clearer for common failures
 			le := strings.ToLower(err.Error())
@@ -192,7 +181,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		id := parts[1]
 		token := parts[2]
 		// validate token and get owner
-		claims, err := tb.authSv.ParseToken(ctx, token)
+		claims, err := tb.authUC.ParseToken(ctx, token)
 		if err != nil {
 			if strings.Contains(strings.ToLower(err.Error()), "expired") {
 				tb.reply(msg.Chat.ID, "token expired, please /login again")
@@ -203,31 +192,20 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		}
 		owner := claims.Subject
 		// fetch metadata and file via handlers' storage
-		filename, ownerID, err := tb.store.GetMetadata(ctx, id)
+		meta, b, err := tb.files.GetForOwner(ctx, owner, id)
 		if err != nil {
-			// give clearer not found message
-			if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no rows") {
+			switch err {
+			case files.ErrForbidden:
+				tb.reply(msg.Chat.ID, "forbidden: owner mismatch")
+			case files.ErrNotFound:
 				tb.reply(msg.Chat.ID, "file not found")
-				return
+			default:
+				tb.reply(msg.Chat.ID, "file not found: "+err.Error())
 			}
-			tb.reply(msg.Chat.ID, "file metadata not found: "+err.Error())
-			return
-		}
-		if ownerID != owner {
-			tb.reply(msg.Chat.ID, "forbidden: owner mismatch")
-			return
-		}
-		b, err := tb.store.Get(ctx, id)
-		if err != nil {
-			if strings.Contains(strings.ToLower(err.Error()), "not found") || strings.Contains(strings.ToLower(err.Error()), "no rows") {
-				tb.reply(msg.Chat.ID, "file not found")
-				return
-			}
-			tb.reply(msg.Chat.ID, "file not found: "+err.Error())
 			return
 		}
 		// send as document
-		d := tele.FileBytes{Name: filename, Bytes: b}
+		d := tele.FileBytes{Name: meta.Filename, Bytes: b}
 		msgCfg := tele.NewDocument(msg.Chat.ID, d)
 		if _, err := tb.bot.Send(msgCfg); err != nil {
 			log.Printf("telegram send doc err: %v", err)
