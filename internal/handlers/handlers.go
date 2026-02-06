@@ -183,3 +183,144 @@ func (h *Handler) ListFiles(c *gin.Context) {
 
 	c.JSON(200, files)
 }
+
+// DeleteFile handles DELETE /files/:id
+func (h *Handler) DeleteFile(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(400, gin.H{"error": "missing file id"})
+		return
+	}
+
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
+
+	_, err := h.filesUC.DeleteForOwner(ctx, ownerID, id)
+	if err != nil {
+		switch err {
+		case files.ErrForbidden:
+			c.JSON(403, gin.H{"error": "forbidden: owner mismatch"})
+		case files.ErrNotFound:
+			c.JSON(404, gin.H{"error": "file not found"})
+		default:
+			c.JSON(500, gin.H{"error": "failed to delete file: " + err.Error()})
+		}
+		return
+	}
+
+	c.Status(204)
+}
+
+// ListSharedFiles returns files shared with the authenticated user.
+func (h *Handler) ListSharedFiles(c *gin.Context) {
+	ctx := c.Request.Context()
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
+
+	files, err := h.filesUC.ListShared(ctx, ownerID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "failed to list shared files: " + err.Error()})
+		return
+	}
+
+	c.JSON(200, files)
+}
+
+// GetSharedFile handles GET /files/shared/:id
+func (h *Handler) GetSharedFile(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(400, gin.H{"error": "missing file id"})
+		return
+	}
+
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
+
+	meta, b, err := h.filesUC.GetForUser(ctx, ownerID, id)
+	if err != nil {
+		switch err {
+		case files.ErrForbidden:
+			c.JSON(403, gin.H{"error": "forbidden"})
+		case files.ErrNotFound:
+			c.JSON(404, gin.H{"error": "file not found"})
+		default:
+			c.JSON(500, gin.H{"error": "failed to get file: " + err.Error()})
+		}
+		return
+	}
+
+	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s\"", meta.Filename))
+	c.Status(200)
+	if _, err := c.Writer.Write(b); err != nil {
+		return
+	}
+}
+
+// ShareFile grants access to a file by username.
+func (h *Handler) ShareFile(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(400, gin.H{"error": "missing file id"})
+		return
+	}
+
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
+
+	var rq struct {
+		Username string `json:"username"`
+	}
+	if err := c.BindJSON(&rq); err != nil {
+		c.JSON(400, gin.H{"error": "invalid body: " + err.Error()})
+		return
+	}
+
+	if err := h.filesUC.ShareByUsername(ctx, ownerID, id, rq.Username); err != nil {
+		switch err {
+		case files.ErrForbidden:
+			c.JSON(403, gin.H{"error": "forbidden"})
+		default:
+			c.JSON(500, gin.H{"error": "failed to share file: " + err.Error()})
+		}
+		return
+	}
+
+	c.Status(204)
+}

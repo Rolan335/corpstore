@@ -32,5 +32,6 @@ func NewProvider(cfg Config, authUC *usecase.Auth, filesUC *usecase.Files) (*Pro
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{Bot: NewBot(bot, authUC, filesUC)}, nil
+	sessions := NewInMemorySessionStore()
+	return &Provider{Bot: NewBot(bot, authUC, filesUC, sessions)}, nil
 }

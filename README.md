@@ -129,6 +129,109 @@ Errors:
 - `401` unauthorized
 - `500` failed to save file
 
+### Delete File
+
+`DELETE /files/:id`
+
+Deletes a file by id.  
+Requires auth. Only owner can delete.
+
+Request:
+
+```
+DELETE /files/a1d5...
+Authorization: Bearer <jwt>
+```
+
+Response (204): no content
+
+Errors:
+- `400` missing id
+- `401` unauthorized
+- `403` forbidden (not owner)
+- `404` file not found
+
+### Share File
+
+`POST /files/:id/share`
+
+Grants access to a file by username.  
+Requires auth. Only owner can share.
+
+Request:
+
+```
+POST /files/a1d5.../share
+Content-Type: application/json
+Authorization: Bearer <jwt>
+
+{
+  "username": "bob"
+}
+```
+
+Response (204): no content
+
+Errors:
+- `400` invalid body
+- `401` unauthorized
+- `403` forbidden (not owner)
+- `404` file not found
+- `500` failed to share file
+
+### List Shared Files
+
+`GET /files/shared`
+
+Lists files shared with the authenticated user.  
+Requires auth.
+
+Request:
+
+```
+GET /files/shared
+Authorization: Bearer <jwt>
+```
+
+Response (200):
+
+```
+[
+  {
+    "id": "a1d5...",
+    "filename": "shared.txt",
+    "owner_id": "4e23b7a9-4f3c-4d68-9a8c-4c7f0ce6d5ce"
+  }
+]
+```
+
+Errors:
+- `401` unauthorized
+- `500` failed to list shared files
+
+### Download Shared File
+
+`GET /files/shared/:id`
+
+Downloads a shared file by id.  
+Requires auth. Must be owner or shared user.
+
+Request:
+
+```
+GET /files/shared/a1d5...
+Authorization: Bearer <jwt>
+```
+
+Response (200):
+- Binary data with `Content-Disposition: attachment; filename="<original>"`.
+
+Errors:
+- `400` missing id
+- `401` unauthorized
+- `403` forbidden
+- `404` file not found
+
 ### Download File
 
 `GET /files/:id`
@@ -201,53 +304,76 @@ Returns `200` if service is ready.
 
 Bot is started only if `TELEGRAM_BOT_TOKEN` is set.
 
-### Register
+### Start
 
 Command:
 
 ```
-/reg <username> <password>
+/start
 ```
 
-Response:
-- `registered user id: <id>` on success
-- error message on failure
+Shows main menu buttons.
+
+### Register
+
+UI flow:
+- Press `Register`
+- Enter username
+- Enter password
 
 ### Login
 
-Command:
-
-```
-/login <username> <password>
-```
-
-Response:
-- `token: <jwt>` on success
-- error message on failure
+UI flow:
+- Press `Login`
+- Enter username
+- Enter password
 
 ### Upload File
 
-Send a document or photo with caption:
-
-```
-/upload <token>
-```
+Send a document or photo (no caption required).  
+You must be logged in.
 
 Response:
-- `file saved with id: <id>` on success
+- `file saved` with `name` and `id` on success
 - error message on failure
 
 Notes:
 - Max file size: 20MB.
 
-### Download File
+### My Files
+
+Press `My files` to get a list of your files as buttons.
+
+Click a file to see details:
+- UUID
+- filename
+- buttons: `Download`, `Delete`, `Share`
+
+### Shared Files
+
+Press `Shared files` to get a list of shared files as buttons.
+
+Click a shared file to see details:
+- UUID
+- filename
+- button: `Download`
+
+### Download File (legacy command)
 
 Command:
 
 ```
-/get <file-id> <token>
+/get <file-id>
 ```
 
 Response:
 - Sends document if owner matches.
 - Error message if not found or forbidden.
+
+### Delete File (UI)
+
+From file details, press `Delete`.
+
+### Share File (UI)
+
+From file details, press `Share` and enter target username.

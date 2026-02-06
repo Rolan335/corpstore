@@ -129,6 +129,109 @@ Response (200):
 - `401` unauthorized
 - `500` failed to save file
 
+### Delete File
+
+`DELETE /files/:id`
+
+Удаляет файл по id.  
+Требует авторизации. Только владелец может удалить.
+
+Request:
+
+```
+DELETE /files/a1d5...
+Authorization: Bearer <jwt>
+```
+
+Response (204): без тела
+
+Ошибки:
+- `400` missing id
+- `401` unauthorized
+- `403` forbidden (not owner)
+- `404` file not found
+
+### Share File
+
+`POST /files/:id/share`
+
+Даёт доступ к файлу пользователю по username.  
+Требует авторизации. Только владелец может делиться.
+
+Request:
+
+```
+POST /files/a1d5.../share
+Content-Type: application/json
+Authorization: Bearer <jwt>
+
+{
+  "username": "bob"
+}
+```
+
+Response (204): без тела
+
+Ошибки:
+- `400` invalid body
+- `401` unauthorized
+- `403` forbidden (not owner)
+- `404` file not found
+- `500` failed to share file
+
+### List Shared Files
+
+`GET /files/shared`
+
+Возвращает список файлов, расшаренных текущему пользователю.  
+Требует авторизации.
+
+Request:
+
+```
+GET /files/shared
+Authorization: Bearer <jwt>
+```
+
+Response (200):
+
+```
+[
+  {
+    "id": "a1d5...",
+    "filename": "shared.txt",
+    "owner_id": "4e23b7a9-4f3c-4d68-9a8c-4c7f0ce6d5ce"
+  }
+]
+```
+
+Ошибки:
+- `401` unauthorized
+- `500` failed to list shared files
+
+### Download Shared File
+
+`GET /files/shared/:id`
+
+Скачивает расшаренный файл по id.  
+Требует авторизации. Доступен владельцу и тем, кому файл расшарен.
+
+Request:
+
+```
+GET /files/shared/a1d5...
+Authorization: Bearer <jwt>
+```
+
+Response (200):
+- Бинарные данные с `Content-Disposition: attachment; filename="<original>"`.
+
+Ошибки:
+- `400` missing id
+- `401` unauthorized
+- `403` forbidden
+- `404` file not found
+
 ### Download File
 
 `GET /files/:id`
@@ -201,53 +304,76 @@ Base URL: `http://localhost:8081`
 
 Бот запускается только если задан `TELEGRAM_BOT_TOKEN`.
 
-### Register
+### Start
 
 Команда:
 
 ```
-/reg <username> <password>
+/start
 ```
 
-Ответ:
-- `registered user id: <id>` если успех
-- сообщение об ошибке если провал
+Показывает главное меню.
+
+### Register
+
+UI flow:
+- Нажми `Register`
+- Введи username
+- Введи password
 
 ### Login
 
-Команда:
-
-```
-/login <username> <password>
-```
-
-Ответ:
-- `token: <jwt>` если успех
-- сообщение об ошибке если провал
+UI flow:
+- Нажми `Login`
+- Введи username
+- Введи password
 
 ### Upload File
 
-Отправь документ или фото с подписью:
-
-```
-/upload <token>
-```
+Отправь документ или фото (подпись не нужна).  
+Нужно быть залогиненным.
 
 Ответ:
-- `file saved with id: <id>` если успех
+- `file saved` с `name` и `id` если успех
 - сообщение об ошибке если провал
 
 Примечания:
 - Максимальный размер файла: 20MB.
 
-### Download File
+### My Files
+
+Нажми `My files`, чтобы получить список своих файлов кнопками.
+
+Клик по файлу показывает:
+- UUID
+- filename
+- кнопки: `Download`, `Delete`, `Share`
+
+### Shared Files
+
+Нажми `Shared files`, чтобы получить список расшаренных файлов кнопками.
+
+Клик по расшаренному файлу показывает:
+- UUID
+- filename
+- кнопку: `Download`
+
+### Download File (legacy command)
 
 Команда:
 
 ```
-/get <file-id> <token>
+/get <file-id>
 ```
 
 Ответ:
 - Отправляет документ, если владелец совпадает.
 - Сообщение об ошибке, если файл не найден или доступ запрещён.
+
+### Delete File (UI)
+
+В карточке файла нажми `Delete`.
+
+### Share File (UI)
+
+В карточке файла нажми `Share` и введи username.

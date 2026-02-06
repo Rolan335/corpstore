@@ -11,6 +11,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"corpstore/internal/auth"
+	"corpstore/internal/fileaccess"
 	"corpstore/internal/files"
 	"corpstore/internal/filestore/local"
 	"corpstore/internal/handlers"
@@ -57,9 +58,10 @@ func main() {
 	usersRepo := users.NewPostgresRepository(dbPool)
 	filesRepo := files.NewPostgresRepository(dbPool)
 	filesSvc := files.NewService(st, filesRepo)
+	accessRepo := fileaccess.NewPostgresRepository(dbPool)
 
 	authProvider := auth.NewProvider(usersRepo, auth.ConfigFromEnv())
-	filesUC := usecase.NewFiles(filesSvc, usersRepo)
+	filesUC := usecase.NewFiles(filesSvc, usersRepo, accessRepo)
 	authUC := usecase.NewAuth(authProvider.Service)
 	h := handlers.NewHandler(filesUC, authUC)
 
@@ -104,6 +106,10 @@ func main() {
 	grp.POST("/files", h.UploadFiles)
 	grp.GET("/files/:id", h.GetFile)
 	grp.GET("/files", h.ListFiles)
+	grp.DELETE("/files/:id", h.DeleteFile)
+	grp.GET("/files/shared", h.ListSharedFiles)
+	grp.GET("/files/shared/:id", h.GetSharedFile)
+	grp.POST("/files/:id/share", h.ShareFile)
 
 	addr := ":8080"
 	log.Printf("listening on %s, storing files in %s", addr, dataDir)

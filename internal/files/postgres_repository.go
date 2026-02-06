@@ -49,3 +49,8 @@ func (r *PostgresRepository) ListByOwner(ctx context.Context, ownerID string) ([
 	}
 	return out, nil
 }
+
+func (r *PostgresRepository) DeleteByID(ctx context.Context, id string) error {
+	_, err := r.pool.Exec(ctx, `DELETE FROM files WHERE id = $1`, id)
+	return err
+}

@@ -70,3 +70,28 @@ func (s *Service) GetForOwner(ctx context.Context, ownerID, id string) (File, []
 func (s *Service) ListByOwner(ctx context.Context, ownerID string) ([]File, error) {
 	return s.repo.ListByOwner(ctx, ownerID)
 }
+
+// DeleteForOwner removes file metadata and bytes if owner matches.
+func (s *Service) DeleteForOwner(ctx context.Context, ownerID, id string) (File, error) {
+	meta, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return File{}, ErrNotFound
+		}
+		return File{}, err
+	}
+	if meta.OwnerID != ownerID {
+		return File{}, ErrForbidden
+	}
+
+	if err := s.repo.DeleteByID(ctx, id); err != nil {
+		return File{}, err
+	}
+	if err := s.store.Delete(ctx, id); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return meta, ErrNotFound
+		}
+		return meta, err
+	}
+	return meta, nil
+}
