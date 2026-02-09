@@ -177,6 +177,7 @@ Response (204): без тела
 - `401` unauthorized
 - `403` forbidden (not owner)
 - `404` file not found
+- `404` user not found
 - `500` failed to share file
 
 ### List Shared Files
@@ -200,7 +201,10 @@ Response (200):
   {
     "id": "a1d5...",
     "filename": "shared.txt",
-    "owner_id": "4e23b7a9-4f3c-4d68-9a8c-4c7f0ce6d5ce"
+    "owner_id": "4e23b7a9-4f3c-4d68-9a8c-4c7f0ce6d5ce",
+    "owner_tg_first_name": "Alex",
+    "owner_tg_last_name": "Ivanov",
+    "owner_tg_username": "alex"
   }
 ]
 ```
@@ -231,6 +235,57 @@ Response (200):
 - `401` unauthorized
 - `403` forbidden
 - `404` file not found
+
+### List Granted Users
+
+`GET /files/:id/shared-users`
+
+Возвращает список пользователей, у которых есть доступ к файлу.  
+Требует авторизации. Только владелец может смотреть.
+
+Request:
+
+```
+GET /files/a1d5.../shared-users
+Authorization: Bearer <jwt>
+```
+
+Response (200):
+
+```
+[
+  { "user_id": "uuid...", "username": "@bob" }
+]
+```
+
+Ошибки:
+- `401` unauthorized
+- `403` forbidden
+- `404` file not found
+- `500` failed to list granted users
+
+### Revoke Share
+
+`DELETE /files/:id/share/:username`
+
+Отзывает доступ у username.  
+Требует авторизации. Только владелец может отзывать.
+
+Request:
+
+```
+DELETE /files/a1d5.../share/@bob
+Authorization: Bearer <jwt>
+```
+
+Response (204): без тела
+
+Ошибки:
+- `401` unauthorized
+- `403` forbidden
+- `404` file not found
+- `404` user not found
+- `500` failed to revoke share
 
 ### Download File
 
@@ -314,6 +369,20 @@ Base URL: `http://localhost:8081`
 
 Показывает главное меню.
 
+### Telegram Flow (Overview)
+
+1. Открой `/start`.
+2. Бот автоматически регистрирует тебя по Telegram аккаунту.
+3. Кнопки:
+- `My files` — список своих файлов.
+- `Shared files` — список файлов, которыми поделились с тобой.
+4. Отправь любой файл или фото — он загрузится.
+5. Нажми на файл, чтобы:
+- скачать
+- удалить (только свои)
+- поделиться (только свои)
+6. `Shared with` показывает пользователей, у которых есть доступ, и позволяет отозвать доступ.
+
 ### Register
 
 UI flow:
@@ -347,7 +416,7 @@ UI flow:
 Клик по файлу показывает:
 - UUID
 - filename
-- кнопки: `Download`, `Delete`, `Share`
+- кнопки: `Download`, `Delete`, `Share`, `Shared with`
 
 ### Shared Files
 
@@ -357,6 +426,10 @@ UI flow:
 - UUID
 - filename
 - кнопку: `Download`
+
+### Shared With (Owners Only)
+
+В карточке файла нажми `Shared with`, чтобы увидеть пользователей и отозвать доступ.
 
 ### Download File (legacy command)
 

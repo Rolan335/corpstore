@@ -8,6 +8,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"corpstore/internal/fileaccess"
 	"corpstore/internal/files"
 	"corpstore/internal/usecase"
 )
@@ -22,6 +23,13 @@ func NewHandler(filesUC *usecase.Files, authUC *usecase.Auth) *Handler {
 	return &Handler{filesUC: filesUC, authUC: authUC}
 }
 
+func (h *Handler) respondError(c *gin.Context, status int, publicMsg string, err error) {
+	if err != nil {
+		log.Printf("handler error: %v", err)
+	}
+	c.JSON(status, gin.H{"error": publicMsg})
+}
+
 // UploadFiles handles POST /files (multipart form). Owner is read from gin context (set by auth middleware).
 func (h *Handler) UploadFiles(c *gin.Context) {
 	start := time.Now()
@@ -31,7 +39,7 @@ func (h *Handler) UploadFiles(c *gin.Context) {
 	form, err := c.MultipartForm()
 	if err != nil {
 		log.Printf("UploadFiles: parse multipart error: %v, elapsed=%s", err, time.Since(start))
-		c.JSON(400, gin.H{"error": "failed to parse multipart form: " + err.Error()})
+		h.respondError(c, 400, "failed to parse multipart form", err)
 		return
 	}
 	log.Printf("UploadFiles: parsed multipart, elapsed=%s", time.Since(start))
@@ -56,7 +64,7 @@ func (h *Handler) UploadFiles(c *gin.Context) {
 	resp, err := h.filesUC.UploadMultipart(ctx, ownerID, headers)
 	if err != nil {
 		log.Printf("UploadFiles: save error: %v, elapsed since start=%s", err, time.Since(start))
-		c.JSON(500, gin.H{"error": "failed to save file: " + err.Error()})
+		h.respondError(c, 500, "failed to save file", err)
 		return
 	}
 
@@ -88,11 +96,11 @@ func (h *Handler) GetFile(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case files.ErrForbidden:
-			c.JSON(403, gin.H{"error": "forbidden: owner mismatch"})
+			h.respondError(c, 403, "forbidden", err)
 		case files.ErrNotFound:
-			c.JSON(404, gin.H{"error": "file not found"})
+			h.respondError(c, 404, "file not found", err)
 		default:
-			c.JSON(500, gin.H{"error": "failed to get file: " + err.Error()})
+			h.respondError(c, 500, "failed to get file", err)
 		}
 		return
 	}
@@ -118,17 +126,17 @@ func (h *Handler) CreateUser(c *gin.Context) {
 		Password string `json:"password"`
 	}
 	if err := c.BindJSON(&rq); err != nil {
-		c.JSON(400, gin.H{"error": "invalid body: " + err.Error()})
+		h.respondError(c, 400, "invalid body", err)
 		return
 	}
 
 	id, err := h.authUC.Register(ctx, rq.Username, rq.Password)
 	if err != nil {
 		if strings.Contains(err.Error(), "required") {
-			c.JSON(400, gin.H{"error": err.Error()})
+			h.respondError(c, 400, "username and password required", err)
 			return
 		}
-		c.JSON(500, gin.H{"error": "failed to create user: " + err.Error()})
+		h.respondError(c, 500, "failed to create user", err)
 		return
 	}
 
@@ -146,16 +154,16 @@ func (h *Handler) Login(c *gin.Context) {
 		Password string `json:"password"`
 	}
 	if err := c.BindJSON(&rq); err != nil {
-		c.JSON(400, gin.H{"error": "invalid body: " + err.Error()})
+		h.respondError(c, 400, "invalid body", err)
 		return
 	}
 	okTok, err := h.authUC.Login(c.Request.Context(), rq.Username, rq.Password)
 	if err != nil {
 		if strings.Contains(err.Error(), "required") {
-			c.JSON(400, gin.H{"error": err.Error()})
+			h.respondError(c, 400, "username and password required", err)
 			return
 		}
-		c.JSON(401, gin.H{"error": "invalid credentials"})
+		h.respondError(c, 401, "invalid credentials", err)
 		return
 	}
 	c.JSON(200, gin.H{"token": okTok})
@@ -177,7 +185,7 @@ func (h *Handler) ListFiles(c *gin.Context) {
 
 	files, err := h.filesUC.ListByOwner(ctx, ownerID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to list files: " + err.Error()})
+		h.respondError(c, 500, "failed to list files", err)
 		return
 	}
 
@@ -208,11 +216,11 @@ func (h *Handler) DeleteFile(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case files.ErrForbidden:
-			c.JSON(403, gin.H{"error": "forbidden: owner mismatch"})
+			h.respondError(c, 403, "forbidden", err)
 		case files.ErrNotFound:
-			c.JSON(404, gin.H{"error": "file not found"})
+			h.respondError(c, 404, "file not found", err)
 		default:
-			c.JSON(500, gin.H{"error": "failed to delete file: " + err.Error()})
+			h.respondError(c, 500, "failed to delete file", err)
 		}
 		return
 	}
@@ -236,7 +244,7 @@ func (h *Handler) ListSharedFiles(c *gin.Context) {
 
 	files, err := h.filesUC.ListShared(ctx, ownerID)
 	if err != nil {
-		c.JSON(500, gin.H{"error": "failed to list shared files: " + err.Error()})
+		h.respondError(c, 500, "failed to list shared files", err)
 		return
 	}
 
@@ -267,11 +275,11 @@ func (h *Handler) GetSharedFile(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case files.ErrForbidden:
-			c.JSON(403, gin.H{"error": "forbidden"})
+			h.respondError(c, 403, "forbidden", err)
 		case files.ErrNotFound:
-			c.JSON(404, gin.H{"error": "file not found"})
+			h.respondError(c, 404, "file not found", err)
 		default:
-			c.JSON(500, gin.H{"error": "failed to get file: " + err.Error()})
+			h.respondError(c, 500, "failed to get file", err)
 		}
 		return
 	}
@@ -308,19 +316,94 @@ func (h *Handler) ShareFile(c *gin.Context) {
 		Username string `json:"username"`
 	}
 	if err := c.BindJSON(&rq); err != nil {
-		c.JSON(400, gin.H{"error": "invalid body: " + err.Error()})
+		h.respondError(c, 400, "invalid body", err)
 		return
 	}
 
-	if err := h.filesUC.ShareByUsername(ctx, ownerID, id, rq.Username); err != nil {
+	if err := h.filesUC.ShareByUsername(ctx, ownerID, id, rq.Username, fileaccess.OwnerTGInfo{}); err != nil {
 		switch err {
 		case files.ErrForbidden:
-			c.JSON(403, gin.H{"error": "forbidden"})
+			h.respondError(c, 403, "forbidden", err)
+		case usecase.ErrUserNotFound:
+			h.respondError(c, 404, "user not found", err)
+		case files.ErrNotFound:
+			h.respondError(c, 404, "file not found", err)
 		default:
-			c.JSON(500, gin.H{"error": "failed to share file: " + err.Error()})
+			h.respondError(c, 500, "failed to share file", err)
 		}
 		return
 	}
 
+	c.Status(204)
+}
+
+// ListGrantedUsers returns users that have access to a file.
+func (h *Handler) ListGrantedUsers(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	if id == "" {
+		c.JSON(400, gin.H{"error": "missing file id"})
+		return
+	}
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
+
+	users, err := h.filesUC.ListGrantedUsers(ctx, ownerID, id)
+	if err != nil {
+		switch err {
+		case files.ErrForbidden:
+			h.respondError(c, 403, "forbidden", err)
+		case files.ErrNotFound:
+			h.respondError(c, 404, "file not found", err)
+		default:
+			h.respondError(c, 500, "failed to list granted users", err)
+		}
+		return
+	}
+
+	c.JSON(200, users)
+}
+
+// RevokeShare revokes access for a user by username.
+func (h *Handler) RevokeShare(c *gin.Context) {
+	ctx := c.Request.Context()
+	id := c.Param("id")
+	username := c.Param("username")
+	if id == "" || username == "" {
+		c.JSON(400, gin.H{"error": "missing file id or username"})
+		return
+	}
+	ownerVal, ok := c.Get("ownerID")
+	if !ok {
+		c.JSON(401, gin.H{"error": "unauthorized: owner not found in context"})
+		return
+	}
+	ownerID, ok := ownerVal.(string)
+	if !ok || ownerID == "" {
+		c.JSON(401, gin.H{"error": "unauthorized: invalid owner id"})
+		return
+	}
+
+	if err := h.filesUC.RevokeShareByUsername(ctx, ownerID, id, username); err != nil {
+		switch err {
+		case files.ErrForbidden:
+			h.respondError(c, 403, "forbidden", err)
+		case files.ErrNotFound:
+			h.respondError(c, 404, "file not found", err)
+		case usecase.ErrUserNotFound:
+			h.respondError(c, 404, "user not found", err)
+		default:
+			h.respondError(c, 500, "failed to revoke share", err)
+		}
+		return
+	}
 	c.Status(204)
 }

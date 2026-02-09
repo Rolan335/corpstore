@@ -2,7 +2,6 @@ package telegram
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -11,7 +10,7 @@ import (
 
 	tele "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
-	"corpstore/internal/auth"
+	"corpstore/internal/fileaccess"
 	"corpstore/internal/files"
 	"corpstore/internal/usecase"
 )
@@ -56,6 +55,13 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 	if text == "" && msg.Document == nil && len(msg.Photo) == 0 {
 		return
 	}
+	if msg.From != nil {
+		if err := tb.ensureTelegramSession(ctx, msg.Chat.ID, msg.From); err != nil {
+			log.Printf("telegram init session error: %v", err)
+			tb.reply(msg.Chat.ID, "failed to init session")
+			return
+		}
+	}
 
 	if text != "" {
 		if tb.handleAuthFlow(ctx, msg, text) {
@@ -63,70 +69,13 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		}
 	}
 
-	// registration and login via text commands
+	// basic commands
 	if strings.HasPrefix(text, "/start") {
 		tb.replyWithKeyboard(msg.Chat.ID, "Welcome! Choose an action:", tb.mainKeyboard())
 		return
 	}
-	if strings.HasPrefix(text, "/logout") {
-		tb.sess.Clear(msg.Chat.ID)
-		tb.replyWithKeyboard(msg.Chat.ID, "Logged out.", tb.mainKeyboard())
-		return
-	}
-	if strings.HasPrefix(text, "/reg") {
-		if tb.isLoggedIn(msg.Chat.ID) {
-			tb.replyWithKeyboard(msg.Chat.ID, "You are already logged in.", tb.mainKeyboard())
-			return
-		}
-		// /reg username password
-		parts := strings.SplitN(text, " ", 3)
-		if len(parts) < 3 {
-			tb.replyWithKeyboard(msg.Chat.ID, "Use the buttons to register.", tb.authKeyboard())
-			return
-		}
-		username := parts[1]
-		password := parts[2]
-		id, err := tb.authUC.Register(ctx, username, password)
-		if err != nil {
-			// try to detect duplicate username
-			if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(strings.ToLower(err.Error()), "unique") {
-				tb.reply(msg.Chat.ID, "registration failed: username already exists")
-				return
-			}
-			tb.reply(msg.Chat.ID, "registration failed: "+err.Error())
-			return
-		}
-		tb.sess.Set(msg.Chat.ID, Session{UserID: id})
-		tb.reply(msg.Chat.ID, "registered user id: "+id)
-		return
-	}
-
-	if strings.HasPrefix(text, "/login") {
-		if tb.isLoggedIn(msg.Chat.ID) {
-			tb.replyWithKeyboard(msg.Chat.ID, "You are already logged in.", tb.mainKeyboard())
-			return
-		}
-		parts := strings.SplitN(text, " ", 3)
-		if len(parts) < 3 {
-			tb.replyWithKeyboard(msg.Chat.ID, "Use the buttons to login.", tb.authKeyboard())
-			return
-		}
-		username := parts[1]
-		password := parts[2]
-		tok, err := tb.authUC.Login(ctx, username, password)
-		if err != nil {
-			if errors.Is(err, auth.ErrInvalidCredentials) {
-				tb.reply(msg.Chat.ID, "login failed: invalid username or password")
-				return
-			}
-			tb.reply(msg.Chat.ID, "login failed: "+err.Error())
-			return
-		}
-		claims, err := tb.authUC.ParseToken(ctx, tok)
-		if err == nil && claims != nil && claims.Subject != "" {
-			tb.sess.Set(msg.Chat.ID, Session{UserID: claims.Subject})
-		}
-		tb.reply(msg.Chat.ID, "token: "+tok)
+	if strings.HasPrefix(text, "/reg") || strings.HasPrefix(text, "/login") || strings.HasPrefix(text, "/logout") {
+		tb.replyWithKeyboard(msg.Chat.ID, "Telegram login is automatic. Use the menu.", tb.mainKeyboard())
 		return
 	}
 
@@ -134,7 +83,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 	if msg.Document != nil || len(msg.Photo) > 0 {
 		sess, ok := tb.sess.Get(msg.Chat.ID)
 		if !ok || sess.UserID == "" {
-			tb.replyWithKeyboard(msg.Chat.ID, "Please log in to upload files.", tb.authKeyboard())
+			tb.replyWithKeyboard(msg.Chat.ID, "Please open /start to initialize.", tb.mainKeyboard())
 			return
 		}
 		owner := sess.UserID
@@ -154,7 +103,8 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 
 		data, err := tb.downloadFile(fileID)
 		if err != nil {
-			tb.reply(msg.Chat.ID, "failed to download file: "+err.Error())
+			log.Printf("telegram download error: %v", err)
+			tb.reply(msg.Chat.ID, "failed to download file")
 			return
 		}
 
@@ -177,7 +127,8 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 				tb.reply(msg.Chat.ID, "failed to save file: insufficient disk space on server")
 				return
 			}
-			tb.reply(msg.Chat.ID, "failed to save file: "+err.Error())
+			log.Printf("telegram save error: %v", err)
+			tb.reply(msg.Chat.ID, "failed to save file")
 			return
 		}
 		tb.reply(msg.Chat.ID, "file saved\nname: "+filename+"\nid: "+id)
@@ -191,7 +142,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 
 	if strings.HasPrefix(text, "/get") {
 		if !tb.isLoggedIn(msg.Chat.ID) {
-			tb.replyWithKeyboard(msg.Chat.ID, "Please log in first.", tb.authKeyboard())
+			tb.replyWithKeyboard(msg.Chat.ID, "Please open /start to initialize.", tb.mainKeyboard())
 			return
 		}
 		// /get <file-id> [token]
@@ -212,7 +163,8 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 			case files.ErrNotFound:
 				tb.reply(msg.Chat.ID, "file not found")
 			default:
-				tb.reply(msg.Chat.ID, "file not found: "+err.Error())
+				log.Printf("telegram get file error: %v", err)
+				tb.reply(msg.Chat.ID, "file not found")
 			}
 			return
 		}
@@ -221,7 +173,7 @@ func (tb *Bot) handleMessage(ctx context.Context, msg *tele.Message) {
 		msgCfg := tele.NewDocument(msg.Chat.ID, d)
 		if _, err := tb.bot.Send(msgCfg); err != nil {
 			log.Printf("telegram send doc err: %v", err)
-			tb.reply(msg.Chat.ID, "failed to send file: "+err.Error())
+			tb.reply(msg.Chat.ID, "failed to send file")
 		}
 		return
 	}
@@ -234,29 +186,18 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 	if cb == nil || cb.Message == nil {
 		return
 	}
+	if cb.From != nil {
+		if err := tb.ensureTelegramSession(ctx, cb.Message.Chat.ID, cb.From); err != nil {
+			log.Printf("telegram init session error: %v", err)
+			tb.answerCallback(cb, "failed to init session")
+			return
+		}
+	}
 	data := strings.TrimSpace(cb.Data)
 	if data == "" {
 		return
 	}
 	switch data {
-	case "auth:register":
-		if tb.isLoggedIn(cb.Message.Chat.ID) {
-			tb.answerCallback(cb, "already logged in")
-			return
-		}
-		tb.setSessionMode(cb.Message.Chat.ID, ModeRegisterUsername)
-		tb.answerCallback(cb, "enter username")
-		tb.reply(cb.Message.Chat.ID, "Registration: enter username")
-		return
-	case "auth:login":
-		if tb.isLoggedIn(cb.Message.Chat.ID) {
-			tb.answerCallback(cb, "already logged in")
-			return
-		}
-		tb.setSessionMode(cb.Message.Chat.ID, ModeLoginUsername)
-		tb.answerCallback(cb, "enter username")
-		tb.reply(cb.Message.Chat.ID, "Login: enter username")
-		return
 	case "files:list":
 		tb.answerCallback(cb, "loading")
 		tb.sendFilesList(ctx, cb.Message.Chat.ID)
@@ -265,17 +206,12 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 		tb.answerCallback(cb, "loading")
 		tb.sendSharedList(ctx, cb.Message.Chat.ID)
 		return
-	case "auth:logout":
-		tb.sess.Clear(cb.Message.Chat.ID)
-		tb.answerCallback(cb, "logged out")
-		tb.replyWithKeyboard(cb.Message.Chat.ID, "Logged out.", tb.mainKeyboard())
-		return
 	}
 	if strings.HasPrefix(data, "fileown:") {
 		id := strings.TrimPrefix(data, "fileown:")
 		sess, ok := tb.sess.Get(cb.Message.Chat.ID)
 		if !ok || sess.UserID == "" {
-			tb.answerCallback(cb, "please /login first")
+			tb.answerCallback(cb, "no session")
 			return
 		}
 		meta, _, err := tb.files.GetForOwner(ctx, sess.UserID, id)
@@ -286,6 +222,7 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 			case files.ErrNotFound:
 				tb.answerCallback(cb, "file not found")
 			default:
+				log.Printf("telegram fileown error: %v", err)
 				tb.answerCallback(cb, "failed to get file")
 			}
 			return
@@ -297,6 +234,7 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 			),
 			tele.NewInlineKeyboardRow(
 				tele.NewInlineKeyboardButtonData("Share", "fileshare:"+meta.ID),
+				tele.NewInlineKeyboardButtonData("Shared with", "filegrants:"+meta.ID),
 			),
 		}
 		msgCfg := tele.NewMessage(cb.Message.Chat.ID, "file:\nname: "+meta.Filename+"\nid: "+meta.ID)
@@ -307,6 +245,19 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 			return
 		}
 		tb.answerCallback(cb, "select action")
+		return
+	}
+	if strings.HasPrefix(data, "filegrants:") {
+		id := strings.TrimPrefix(data, "filegrants:")
+		sess, ok := tb.sess.Get(cb.Message.Chat.ID)
+		if !ok || sess.UserID == "" {
+			tb.answerCallback(cb, "no session")
+			return
+		}
+		sess.Temp.FileID = id
+		tb.sess.Set(cb.Message.Chat.ID, sess)
+		tb.answerCallback(cb, "loading")
+		tb.sendGrantedUsers(ctx, cb.Message.Chat.ID)
 		return
 	}
 	if strings.HasPrefix(data, "filedl:") {
@@ -324,6 +275,7 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 			case files.ErrNotFound:
 				tb.answerCallback(cb, "file not found")
 			default:
+				log.Printf("telegram download error: %v", err)
 				tb.answerCallback(cb, "failed to get file")
 			}
 			return
@@ -353,6 +305,7 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 			case files.ErrNotFound:
 				tb.answerCallback(cb, "file not found")
 			default:
+				log.Printf("telegram delete error: %v", err)
 				tb.answerCallback(cb, "failed to delete file")
 			}
 			return
@@ -376,6 +329,7 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 			case files.ErrNotFound:
 				tb.answerCallback(cb, "file not found")
 			default:
+				log.Printf("telegram shared file error: %v", err)
 				tb.answerCallback(cb, "failed to get file")
 			}
 			return
@@ -399,14 +353,40 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 		id := strings.TrimPrefix(data, "fileshare:")
 		sess, ok := tb.sess.Get(cb.Message.Chat.ID)
 		if !ok || sess.UserID == "" {
-			tb.answerCallback(cb, "please /login first")
+			tb.answerCallback(cb, "no session")
 			return
 		}
 		sess.Mode = ModeShareUsername
 		sess.Temp.FileID = id
+		if cb.From != nil {
+			sess.Temp.OwnerFirstName = cb.From.FirstName
+			sess.Temp.OwnerLastName = cb.From.LastName
+			sess.Temp.OwnerUsername = cb.From.UserName
+		}
 		tb.sess.Set(cb.Message.Chat.ID, sess)
 		tb.answerCallback(cb, "enter username")
 		tb.reply(cb.Message.Chat.ID, "Share: enter username")
+		return
+	}
+	if strings.HasPrefix(data, "rev:") {
+		userID := strings.TrimPrefix(data, "rev:")
+		sess, ok := tb.sess.Get(cb.Message.Chat.ID)
+		if !ok || sess.UserID == "" {
+			tb.answerCallback(cb, "no session")
+			return
+		}
+		fileID := strings.TrimSpace(sess.Temp.FileID)
+		if fileID == "" {
+			tb.answerCallback(cb, "select a file first")
+			return
+		}
+		if err := tb.files.RevokeShare(ctx, sess.UserID, fileID, userID); err != nil {
+			log.Printf("telegram revoke error: %v", err)
+			tb.answerCallback(cb, "revoke failed")
+			return
+		}
+		tb.answerCallback(cb, "revoked")
+		tb.sendGrantedUsers(ctx, cb.Message.Chat.ID)
 		return
 	}
 }
@@ -423,14 +403,6 @@ func (tb *Bot) handleAuthFlow(ctx context.Context, msg *tele.Message, text strin
 	if !ok || sess.Mode == ModeNone {
 		return false
 	}
-	if sess.UserID != "" && sess.Mode != ModeShareUsername {
-		sess.Mode = ModeNone
-		sess.Temp.Username = ""
-		sess.Temp.FileID = ""
-		tb.sess.Set(msg.Chat.ID, sess)
-		tb.replyWithKeyboard(msg.Chat.ID, "You are already logged in.", tb.mainKeyboard())
-		return true
-	}
 	if text == "/cancel" || text == "/start" {
 		sess.Mode = ModeNone
 		sess.Temp.Username = ""
@@ -440,57 +412,6 @@ func (tb *Bot) handleAuthFlow(ctx context.Context, msg *tele.Message, text strin
 		return true
 	}
 	switch sess.Mode {
-	case ModeRegisterUsername:
-		sess.Mode = ModeRegisterPassword
-		sess.Temp.Username = text
-		tb.sess.Set(msg.Chat.ID, sess)
-		tb.reply(msg.Chat.ID, "Registration: enter password")
-		return true
-	case ModeRegisterPassword:
-		username := strings.TrimSpace(sess.Temp.Username)
-		password := text
-		id, err := tb.authUC.Register(ctx, username, password)
-		if err != nil {
-			tb.reply(msg.Chat.ID, "registration failed: "+err.Error())
-			sess.Mode = ModeNone
-			sess.Temp.Username = ""
-			tb.sess.Set(msg.Chat.ID, sess)
-			return true
-		}
-		sess.UserID = id
-		sess.Mode = ModeNone
-		sess.Temp.Username = ""
-		sess.Temp.FileID = ""
-		tb.sess.Set(msg.Chat.ID, sess)
-		tb.replyWithKeyboard(msg.Chat.ID, "Registered. You can upload files now.", tb.mainKeyboard())
-		return true
-	case ModeLoginUsername:
-		sess.Mode = ModeLoginPassword
-		sess.Temp.Username = text
-		tb.sess.Set(msg.Chat.ID, sess)
-		tb.reply(msg.Chat.ID, "Login: enter password")
-		return true
-	case ModeLoginPassword:
-		username := strings.TrimSpace(sess.Temp.Username)
-		password := text
-		tok, err := tb.authUC.Login(ctx, username, password)
-		if err != nil {
-			tb.reply(msg.Chat.ID, "login failed: "+err.Error())
-			sess.Mode = ModeNone
-			sess.Temp.Username = ""
-			tb.sess.Set(msg.Chat.ID, sess)
-			return true
-		}
-		claims, err := tb.authUC.ParseToken(ctx, tok)
-		if err == nil && claims != nil && claims.Subject != "" {
-			sess.UserID = claims.Subject
-		}
-		sess.Mode = ModeNone
-		sess.Temp.Username = ""
-		sess.Temp.FileID = ""
-		tb.sess.Set(msg.Chat.ID, sess)
-		tb.replyWithKeyboard(msg.Chat.ID, "Logged in. You can upload files now.", tb.mainKeyboard())
-		return true
 	case ModeShareUsername:
 		username := strings.TrimSpace(text)
 		fileID := strings.TrimSpace(sess.Temp.FileID)
@@ -499,20 +420,44 @@ func (tb *Bot) handleAuthFlow(ctx context.Context, msg *tele.Message, text strin
 			sess.Mode = ModeNone
 			sess.Temp.Username = ""
 			sess.Temp.FileID = ""
+			sess.Temp.OwnerFirstName = ""
+			sess.Temp.OwnerLastName = ""
+			sess.Temp.OwnerUsername = ""
 			tb.sess.Set(msg.Chat.ID, sess)
 			return true
 		}
-		if err := tb.files.ShareByUsername(ctx, sess.UserID, fileID, username); err != nil {
-			tb.reply(msg.Chat.ID, "share failed: "+err.Error())
+		ownerTG := fileaccess.OwnerTGInfo{
+			FirstName: sess.Temp.OwnerFirstName,
+			LastName:  sess.Temp.OwnerLastName,
+			Username:  sess.Temp.OwnerUsername,
+		}
+		if err := tb.files.ShareByUsername(ctx, sess.UserID, fileID, username, ownerTG); err != nil {
+			switch err {
+			case usecase.ErrUserNotFound:
+				tb.reply(msg.Chat.ID, "user not found")
+			case files.ErrNotFound:
+				tb.reply(msg.Chat.ID, "file not found")
+			case files.ErrForbidden:
+				tb.reply(msg.Chat.ID, "forbidden")
+			default:
+				log.Printf("telegram share error: %v", err)
+				tb.reply(msg.Chat.ID, "share failed")
+			}
 			sess.Mode = ModeNone
 			sess.Temp.Username = ""
 			sess.Temp.FileID = ""
+			sess.Temp.OwnerFirstName = ""
+			sess.Temp.OwnerLastName = ""
+			sess.Temp.OwnerUsername = ""
 			tb.sess.Set(msg.Chat.ID, sess)
 			return true
 		}
 		sess.Mode = ModeNone
 		sess.Temp.Username = ""
 		sess.Temp.FileID = ""
+		sess.Temp.OwnerFirstName = ""
+		sess.Temp.OwnerLastName = ""
+		sess.Temp.OwnerUsername = ""
 		tb.sess.Set(msg.Chat.ID, sess)
 		tb.replyWithKeyboard(msg.Chat.ID, "Shared.", tb.mainKeyboard())
 		return true
@@ -534,12 +479,13 @@ func (tb *Bot) setSessionMode(chatID int64, mode SessionMode) {
 func (tb *Bot) sendFilesList(ctx context.Context, chatID int64) {
 	sess, ok := tb.sess.Get(chatID)
 	if !ok || sess.UserID == "" {
-		tb.replyWithKeyboard(chatID, "Please log in to see files.", tb.authKeyboard())
+		tb.replyWithKeyboard(chatID, "Please open /start to initialize.", tb.mainKeyboard())
 		return
 	}
 	list, err := tb.files.ListByOwner(ctx, sess.UserID)
 	if err != nil {
-		tb.reply(chatID, "failed to list files: "+err.Error())
+		log.Printf("telegram list files error: %v", err)
+		tb.reply(chatID, "failed to list files")
 		return
 	}
 	if len(list) == 0 {
@@ -555,19 +501,20 @@ func (tb *Bot) sendFilesList(ctx context.Context, chatID int64) {
 	msgCfg.ReplyMarkup = tele.NewInlineKeyboardMarkup(rows...)
 	if _, err := tb.bot.Send(msgCfg); err != nil {
 		log.Printf("telegram send list err: %v", err)
-		tb.reply(chatID, "failed to send list: "+err.Error())
+		tb.reply(chatID, "failed to send list")
 	}
 }
 
 func (tb *Bot) sendSharedList(ctx context.Context, chatID int64) {
 	sess, ok := tb.sess.Get(chatID)
 	if !ok || sess.UserID == "" {
-		tb.replyWithKeyboard(chatID, "Please log in to see shared files.", tb.authKeyboard())
+		tb.replyWithKeyboard(chatID, "Please open /start to initialize.", tb.mainKeyboard())
 		return
 	}
 	list, err := tb.files.ListShared(ctx, sess.UserID)
 	if err != nil {
-		tb.reply(chatID, "failed to list shared files: "+err.Error())
+		log.Printf("telegram list shared error: %v", err)
+		tb.reply(chatID, "failed to list shared files")
 		return
 	}
 	if len(list) == 0 {
@@ -576,14 +523,54 @@ func (tb *Bot) sendSharedList(ctx context.Context, chatID int64) {
 	}
 	rows := make([][]tele.InlineKeyboardButton, 0, len(list))
 	for _, f := range list {
-		btn := tele.NewInlineKeyboardButtonData(f.Filename, "filesh:"+f.ID)
+		owner := tb.ownerDisplay(f.OwnerTGFirstName, f.OwnerTGLastName, f.OwnerTGUsername, f.OwnerID)
+		label := f.Filename
+		if owner != "" {
+			label = f.Filename + " · " + owner
+		}
+		btn := tele.NewInlineKeyboardButtonData(label, "filesh:"+f.ID)
 		rows = append(rows, tele.NewInlineKeyboardRow(btn))
 	}
 	msgCfg := tele.NewMessage(chatID, "Shared files:")
 	msgCfg.ReplyMarkup = tele.NewInlineKeyboardMarkup(rows...)
 	if _, err := tb.bot.Send(msgCfg); err != nil {
 		log.Printf("telegram send list err: %v", err)
-		tb.reply(chatID, "failed to send list: "+err.Error())
+		tb.reply(chatID, "failed to send list")
+	}
+}
+
+func (tb *Bot) sendGrantedUsers(ctx context.Context, chatID int64) {
+	sess, ok := tb.sess.Get(chatID)
+	if !ok || sess.UserID == "" {
+		tb.replyWithKeyboard(chatID, "Please open /start to initialize.", tb.mainKeyboard())
+		return
+	}
+	fileID := strings.TrimSpace(sess.Temp.FileID)
+	if fileID == "" {
+		tb.reply(chatID, "select a file first")
+		return
+	}
+	users, err := tb.files.ListGrantedUsers(ctx, sess.UserID, fileID)
+	if err != nil {
+		log.Printf("telegram list granted error: %v", err)
+		tb.reply(chatID, "failed to list shared users")
+		return
+	}
+	if len(users) == 0 {
+		tb.reply(chatID, "not shared with anyone")
+		return
+	}
+	rows := make([][]tele.InlineKeyboardButton, 0, len(users))
+	for _, u := range users {
+		label := u.Username
+		btn := tele.NewInlineKeyboardButtonData("Revoke: "+label, "rev:"+u.UserID)
+		rows = append(rows, tele.NewInlineKeyboardRow(btn))
+	}
+	msgCfg := tele.NewMessage(chatID, "Shared with:")
+	msgCfg.ReplyMarkup = tele.NewInlineKeyboardMarkup(rows...)
+	if _, err := tb.bot.Send(msgCfg); err != nil {
+		log.Printf("telegram send list err: %v", err)
+		tb.reply(chatID, "failed to send list")
 	}
 }
 
@@ -592,24 +579,6 @@ func (tb *Bot) mainKeyboard() *tele.InlineKeyboardMarkup {
 		tele.NewInlineKeyboardRow(
 			tele.NewInlineKeyboardButtonData("My files", "files:list"),
 			tele.NewInlineKeyboardButtonData("Shared files", "files:shared"),
-		),
-		tele.NewInlineKeyboardRow(
-			tele.NewInlineKeyboardButtonData("Logout", "auth:logout"),
-		),
-		tele.NewInlineKeyboardRow(
-			tele.NewInlineKeyboardButtonData("Login", "auth:login"),
-			tele.NewInlineKeyboardButtonData("Register", "auth:register"),
-		),
-	}
-	m := tele.NewInlineKeyboardMarkup(rows...)
-	return &m
-}
-
-func (tb *Bot) authKeyboard() *tele.InlineKeyboardMarkup {
-	rows := [][]tele.InlineKeyboardButton{
-		tele.NewInlineKeyboardRow(
-			tele.NewInlineKeyboardButtonData("Login", "auth:login"),
-			tele.NewInlineKeyboardButtonData("Register", "auth:register"),
 		),
 	}
 	m := tele.NewInlineKeyboardMarkup(rows...)
@@ -629,6 +598,43 @@ func (tb *Bot) replyWithKeyboard(chatID int64, text string, kb *tele.InlineKeybo
 func (tb *Bot) isLoggedIn(chatID int64) bool {
 	sess, ok := tb.sess.Get(chatID)
 	return ok && sess.UserID != ""
+}
+
+func (tb *Bot) ensureTelegramSession(ctx context.Context, chatID int64, u *tele.User) error {
+	if u == nil {
+		return nil
+	}
+	id, err := tb.authUC.EnsureTelegramUser(ctx, u.ID, u.UserName)
+	if err != nil {
+		return err
+	}
+	sess, ok := tb.sess.Get(chatID)
+	if !ok || sess.UserID == "" {
+		tb.sess.Set(chatID, Session{UserID: id})
+		return nil
+	}
+	if sess.UserID != id {
+		sess.UserID = id
+		tb.sess.Set(chatID, sess)
+	}
+	return nil
+}
+
+func (tb *Bot) ownerDisplay(first, last, username, ownerID string) string {
+	name := strings.TrimSpace(first + " " + last)
+	if username != "" {
+		if name != "" {
+			return name + " (@" + username + ")"
+		}
+		return "@" + username
+	}
+	if name != "" {
+		return name
+	}
+	if ownerID != "" {
+		return ownerID
+	}
+	return ""
 }
 
 func (tb *Bot) downloadFile(fileID string) ([]byte, error) {

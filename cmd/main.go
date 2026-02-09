@@ -62,7 +62,7 @@ func main() {
 
 	authProvider := auth.NewProvider(usersRepo, auth.ConfigFromEnv())
 	filesUC := usecase.NewFiles(filesSvc, usersRepo, accessRepo)
-	authUC := usecase.NewAuth(authProvider.Service)
+	authUC := usecase.NewAuth(authProvider.Service, usersRepo)
 	h := handlers.NewHandler(filesUC, authUC)
 
 	// try initialize telegram bot (optional)
@@ -110,6 +110,8 @@ func main() {
 	grp.GET("/files/shared", h.ListSharedFiles)
 	grp.GET("/files/shared/:id", h.GetSharedFile)
 	grp.POST("/files/:id/share", h.ShareFile)
+	grp.GET("/files/:id/shared-users", h.ListGrantedUsers)
+	grp.DELETE("/files/:id/share/:username", h.RevokeShare)
 
 	addr := ":8080"
 	log.Printf("listening on %s, storing files in %s", addr, dataDir)

@@ -16,6 +16,10 @@ import (
 	"corpstore/internal/users"
 )
 
+var (
+	ErrUserNotFound = errors.New("user not found")
+)
+
 // Files handles file-related operations.
 type Files struct {
 	filesSvc *files.Service
@@ -164,11 +168,24 @@ func (u *Files) DeleteForOwner(ctx context.Context, ownerID, id string) (files.F
 	if id == "" {
 		return files.File{}, errors.New("invalid file id")
 	}
+	meta, err := u.filesSvc.GetMeta(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return files.File{}, files.ErrNotFound
+		}
+		return files.File{}, err
+	}
+	if meta.OwnerID != ownerID {
+		return files.File{}, files.ErrForbidden
+	}
+	if err := u.access.RevokeAllByFile(ctx, id); err != nil {
+		return files.File{}, err
+	}
 	return u.filesSvc.DeleteForOwner(ctx, ownerID, id)
 }
 
 // ShareByUsername grants access to a file by username.
-func (u *Files) ShareByUsername(ctx context.Context, ownerID, fileID, username string) error {
+func (u *Files) ShareByUsername(ctx context.Context, ownerID, fileID, username string, ownerTG fileaccess.OwnerTGInfo) error {
 	ownerID = strings.TrimSpace(ownerID)
 	if ownerID == "" {
 		return errors.New("invalid owner id")
@@ -195,7 +212,94 @@ func (u *Files) ShareByUsername(ctx context.Context, ownerID, fileID, username s
 
 	uRec, err := u.users.GetByUsername(ctx, username)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && !strings.HasPrefix(username, "@") {
+			uRec, err = u.users.GetByUsername(ctx, "@"+username)
+		}
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrUserNotFound
+			}
+			return err
+		}
+	}
+	return u.access.Grant(ctx, fileID, uRec.ID, ownerTG)
+}
+
+// ListGrantedUsers returns users that have access to the owner's file.
+func (u *Files) ListGrantedUsers(ctx context.Context, ownerID, fileID string) ([]fileaccess.GrantedUser, error) {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return nil, errors.New("invalid owner id")
+	}
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return nil, errors.New("invalid file id")
+	}
+	meta, err := u.filesSvc.GetMeta(ctx, fileID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, files.ErrNotFound
+		}
+		return nil, err
+	}
+	if meta.OwnerID != ownerID {
+		return nil, files.ErrForbidden
+	}
+	return u.access.ListGrantedUsers(ctx, fileID)
+}
+
+// RevokeShare revokes access for userID.
+func (u *Files) RevokeShare(ctx context.Context, ownerID, fileID, userID string) error {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return errors.New("invalid owner id")
+	}
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return errors.New("invalid file id")
+	}
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return errors.New("invalid user id")
+	}
+	meta, err := u.filesSvc.GetMeta(ctx, fileID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return files.ErrNotFound
+		}
 		return err
 	}
-	return u.access.Grant(ctx, fileID, uRec.ID)
+	if meta.OwnerID != ownerID {
+		return files.ErrForbidden
+	}
+	return u.access.Revoke(ctx, fileID, userID)
+}
+
+// RevokeShareByUsername revokes access by username.
+func (u *Files) RevokeShareByUsername(ctx context.Context, ownerID, fileID, username string) error {
+	ownerID = strings.TrimSpace(ownerID)
+	if ownerID == "" {
+		return errors.New("invalid owner id")
+	}
+	fileID = strings.TrimSpace(fileID)
+	if fileID == "" {
+		return errors.New("invalid file id")
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("username required")
+	}
+	uRec, err := u.users.GetByUsername(ctx, username)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) && !strings.HasPrefix(username, "@") {
+			uRec, err = u.users.GetByUsername(ctx, "@"+username)
+		}
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ErrUserNotFound
+			}
+			return err
+		}
+	}
+	return u.RevokeShare(ctx, ownerID, fileID, uRec.ID)
 }

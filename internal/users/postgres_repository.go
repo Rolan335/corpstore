@@ -41,3 +41,8 @@ func (r *PostgresRepository) Exists(ctx context.Context, id string) (bool, error
 	}
 	return exists, nil
 }
+
+func (r *PostgresRepository) UpdateUsername(ctx context.Context, id string, username string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE users SET username = $1 WHERE id = $2`, username, id)
+	return err
+}

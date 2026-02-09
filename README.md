@@ -177,6 +177,7 @@ Errors:
 - `401` unauthorized
 - `403` forbidden (not owner)
 - `404` file not found
+- `404` user not found
 - `500` failed to share file
 
 ### List Shared Files
@@ -200,7 +201,10 @@ Response (200):
   {
     "id": "a1d5...",
     "filename": "shared.txt",
-    "owner_id": "4e23b7a9-4f3c-4d68-9a8c-4c7f0ce6d5ce"
+    "owner_id": "4e23b7a9-4f3c-4d68-9a8c-4c7f0ce6d5ce",
+    "owner_tg_first_name": "Alex",
+    "owner_tg_last_name": "Ivanov",
+    "owner_tg_username": "alex"
   }
 ]
 ```
@@ -231,6 +235,57 @@ Errors:
 - `401` unauthorized
 - `403` forbidden
 - `404` file not found
+
+### List Granted Users
+
+`GET /files/:id/shared-users`
+
+Lists users who have access to a file.  
+Requires auth. Only owner can view.
+
+Request:
+
+```
+GET /files/a1d5.../shared-users
+Authorization: Bearer <jwt>
+```
+
+Response (200):
+
+```
+[
+  { "user_id": "uuid...", "username": "@bob" }
+]
+```
+
+Errors:
+- `401` unauthorized
+- `403` forbidden
+- `404` file not found
+- `500` failed to list granted users
+
+### Revoke Share
+
+`DELETE /files/:id/share/:username`
+
+Revokes access for a username.  
+Requires auth. Only owner can revoke.
+
+Request:
+
+```
+DELETE /files/a1d5.../share/@bob
+Authorization: Bearer <jwt>
+```
+
+Response (204): no content
+
+Errors:
+- `401` unauthorized
+- `403` forbidden
+- `404` file not found
+- `404` user not found
+- `500` failed to revoke share
 
 ### Download File
 
@@ -314,6 +369,20 @@ Command:
 
 Shows main menu buttons.
 
+### Telegram Flow (Overview)
+
+1. Open `/start`.
+2. Bot auto-registers you by your Telegram account.
+3. Use buttons:
+- `My files` to list your files.
+- `Shared files` to list files shared with you.
+4. Send any file or photo to upload.
+5. Click a file to:
+- Download
+- Delete (only your files)
+- Share (only your files)
+6. `Shared with` shows users who currently have access to your file and allows revoke.
+
 ### Register
 
 UI flow:
@@ -347,7 +416,7 @@ Press `My files` to get a list of your files as buttons.
 Click a file to see details:
 - UUID
 - filename
-- buttons: `Download`, `Delete`, `Share`
+- buttons: `Download`, `Delete`, `Share`, `Shared with`
 
 ### Shared Files
 
@@ -357,6 +426,10 @@ Click a shared file to see details:
 - UUID
 - filename
 - button: `Download`
+
+### Shared With (Owners Only)
+
+From file details press `Shared with` to see a list of users and revoke access.
 
 ### Download File (legacy command)
 

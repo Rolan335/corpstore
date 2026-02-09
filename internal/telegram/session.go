@@ -21,8 +21,11 @@ const (
 )
 
 type SessionTemp struct {
-	Username string
-	FileID   string
+	Username        string
+	FileID          string
+	OwnerFirstName  string
+	OwnerLastName   string
+	OwnerUsername   string
 }
 
 // SessionStore persists sessions for telegram chats.
