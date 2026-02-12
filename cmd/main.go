@@ -16,8 +16,8 @@ import (
 	"corpstore/internal/filestore/local"
 	"corpstore/internal/handlers"
 	"corpstore/internal/telegram"
-	"corpstore/internal/users"
 	"corpstore/internal/usecase"
+	"corpstore/internal/users"
 )
 
 //TODO: Сделать удаление файлов и меты из бд.
@@ -25,6 +25,8 @@ import (
 //TODO: Комменты на русском
 //TODO: Обмен файлами между зарегаными юзерами
 //TODO: Шифровать файлы на сервере как-то
+
+//TODO: При shared files при попытке скачать файл которым поделились выскакивает forbidden.
 
 func main() {
 	// try to load .env if present

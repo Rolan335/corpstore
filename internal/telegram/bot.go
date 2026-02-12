@@ -264,7 +264,7 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 		id := strings.TrimPrefix(data, "filedl:")
 		sess, ok := tb.sess.Get(cb.Message.Chat.ID)
 		if !ok || sess.UserID == "" {
-			tb.answerCallback(cb, "please /login first")
+			tb.answerCallback(cb, "no session")
 			return
 		}
 		meta, b, err := tb.files.GetForOwner(ctx, sess.UserID, id)
@@ -276,6 +276,36 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 				tb.answerCallback(cb, "file not found")
 			default:
 				log.Printf("telegram download error: %v", err)
+				tb.answerCallback(cb, "failed to get file")
+			}
+			return
+		}
+		d := tele.FileBytes{Name: meta.Filename, Bytes: b}
+		msgCfg := tele.NewDocument(cb.Message.Chat.ID, d)
+		if _, err := tb.bot.Send(msgCfg); err != nil {
+			log.Printf("telegram send doc err: %v", err)
+			tb.answerCallback(cb, "failed to send file")
+			return
+		}
+		tb.answerCallback(cb, "sending file")
+		return
+	}
+	if strings.HasPrefix(data, "filedlsh:") {
+		id := strings.TrimPrefix(data, "filedlsh:")
+		sess, ok := tb.sess.Get(cb.Message.Chat.ID)
+		if !ok || sess.UserID == "" {
+			tb.answerCallback(cb, "no session")
+			return
+		}
+		meta, b, err := tb.files.GetForUser(ctx, sess.UserID, id)
+		if err != nil {
+			switch err {
+			case files.ErrForbidden:
+				tb.answerCallback(cb, "forbidden")
+			case files.ErrNotFound:
+				tb.answerCallback(cb, "file not found")
+			default:
+				log.Printf("telegram download shared error: %v", err)
 				tb.answerCallback(cb, "failed to get file")
 			}
 			return
@@ -336,7 +366,7 @@ func (tb *Bot) handleCallback(ctx context.Context, cb *tele.CallbackQuery) {
 		}
 		rows := [][]tele.InlineKeyboardButton{
 			tele.NewInlineKeyboardRow(
-				tele.NewInlineKeyboardButtonData("Download", "filedl:"+meta.ID),
+				tele.NewInlineKeyboardButtonData("Download", "filedlsh:"+meta.ID),
 			),
 		}
 		msgCfg := tele.NewMessage(cb.Message.Chat.ID, "shared file:\nname: "+meta.Filename+"\nid: "+meta.ID)
