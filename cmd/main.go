@@ -20,14 +20,6 @@ import (
 	"corpstore/internal/users"
 )
 
-//TODO: Сделать удаление файлов и меты из бд.
-//TODO: Изменение пользователя
-//TODO: Комменты на русском
-//TODO: Обмен файлами между зарегаными юзерами
-//TODO: Шифровать файлы на сервере как-то
-
-//TODO: При shared files при попытке скачать файл которым поделились выскакивает forbidden.
-
 func main() {
 	// try to load .env if present
 	_ = godotenv.Load("./.env")
